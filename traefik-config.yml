@@ -1,0 +1,23 @@
+tls:
+  certificates:
+    - certFile: "/certs/fullchain.crt"
+      keyFile: "/certs/wildcard.key"
+
+http:
+  middlewares:
+    redirect:
+      redirectScheme:
+        scheme: https
+
+  routers:
+    nombredeservicio:
+      rule: "Host(`nombredeservicio.com.gt`)"
+      entryPoints: ["websecure"]
+      tls: true
+      service: nombredeservicio-service
+
+  services:
+    nombredeservicio-service:
+      loadBalancer:
+        servers:
+          - url: "http://nombredeservicio:8080"
