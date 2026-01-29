@@ -22,6 +22,7 @@ from api.v1.routes import auth_routes
 from api.v1.routes import user_routes
 from api.v1.routes import role_routes
 from api.v1.routes import institution_routes
+from api.v1.routes import beneficiario_routes
 
 # Import models to register them with SQLAlchemy
 from api.v1.models import (
@@ -70,6 +71,7 @@ app.include_router(auth_routes.router, prefix="/api/v1")
 app.include_router(user_routes.router, prefix="/api/v1")
 app.include_router(role_routes.router, prefix="/api/v1")
 app.include_router(institution_routes.router, prefix="/api/v1")
+app.include_router(beneficiario_routes.router, prefix="/api/v1")
 
 # Legacy/Example routes
 app.include_router(ticket_routes.router, prefix="/api/v1")

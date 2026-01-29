@@ -5,6 +5,16 @@ from starlette.requests import Request
 
 
 class ResponseWrapperMiddleware(BaseHTTPMiddleware):
+    # Headers que deben preservarse (CORS, etc.)
+    _PASSTHROUGH_PREFIXES = ("access-control-",)
+
+    def _carry_headers(self, original_response, new_response):
+        """Copia headers CORS del response original al nuevo."""
+        for key, value in original_response.headers.items():
+            if any(key.lower().startswith(p) for p in self._PASSTHROUGH_PREFIXES):
+                new_response.headers[key] = value
+        return new_response
+
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
 
@@ -28,7 +38,8 @@ class ResponseWrapperMiddleware(BaseHTTPMiddleware):
             isinstance(original_data, dict)
             and {"result", "message", "data"}.issubset(original_data)
         ):
-            return JSONResponse(content=original_data, status_code=response.status_code)
+            new_resp = JSONResponse(content=original_data, status_code=response.status_code)
+            return self._carry_headers(response, new_resp)
 
         wrapped = {
             "result": True,
@@ -36,4 +47,5 @@ class ResponseWrapperMiddleware(BaseHTTPMiddleware):
             "data": original_data,
         }
 
-        return JSONResponse(content=wrapped, status_code=response.status_code)
+        new_resp = JSONResponse(content=wrapped, status_code=response.status_code)
+        return self._carry_headers(response, new_resp)
