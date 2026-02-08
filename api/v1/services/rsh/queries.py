@@ -88,6 +88,66 @@ def build_filters(**kwargs) -> tuple[str, dict, set[str]]:
         joins_needed.add("demograficos")
         conditions.append("d.personas_con_dificultad > 0")
 
+    # Filtros que requieren JOIN con entrevista_hogares
+    if fuente_agua := kwargs.get("fuente_agua"):
+        joins_needed.add("hogares")
+        conditions.append("h.ch10_descripcion ILIKE {fuente_agua:String}")
+        params["fuente_agua"] = f"%{fuente_agua}%"
+
+    if tipo_sanitario := kwargs.get("tipo_sanitario"):
+        joins_needed.add("hogares")
+        conditions.append("h.ch13_descripcion ILIKE {tipo_sanitario:String}")
+        params["tipo_sanitario"] = f"%{tipo_sanitario}%"
+
+    if alumbrado_val := kwargs.get("alumbrado"):
+        joins_needed.add("hogares")
+        conditions.append("h.ch16_descripcion ILIKE {alumbrado:String}")
+        params["alumbrado"] = f"%{alumbrado_val}%"
+
+    if combustible := kwargs.get("combustible_cocina"):
+        joins_needed.add("hogares")
+        conditions.append("h.ch06_descripcion ILIKE {combustible:String}")
+        params["combustible"] = f"%{combustible}%"
+
+    if kwargs.get("tiene_internet"):
+        joins_needed.add("hogares")
+        conditions.append("lower(h.ch_18_bien_hogar_internet) = 'si'")
+
+    if kwargs.get("tiene_computadora"):
+        joins_needed.add("hogares")
+        conditions.append("lower(h.ch_18_bien_hogar_compu_laptop) = 'si'")
+
+    if kwargs.get("tiene_refrigerador"):
+        joins_needed.add("hogares")
+        conditions.append("lower(h.ch_18_bien_hogar_refrigerador) = 'si'")
+
+    if kwargs.get("con_hacinamiento"):
+        joins_needed.add("hogares")
+        conditions.append(
+            "h.ch4_total_cuartos_utiliza_como_dormitorios > 0 AND "
+            "h.ch2_cuantas_personas_residen_habitualmente_en_hogar / h.ch4_total_cuartos_utiliza_como_dormitorios > 3"
+        )
+
+    # Filtros que requieren subquery en entrevista_personas
+    if kwargs.get("con_analfabetismo"):
+        conditions.append(
+            "EXISTS (SELECT 1 FROM rsh.entrevista_personas AS ep "
+            "WHERE ep.hogar_id = p.hogar_id AND lower(ep.pe1_descripcion) = 'no')"
+        )
+
+    if kwargs.get("con_menores_sin_escuela"):
+        conditions.append(
+            "EXISTS (SELECT 1 FROM rsh.entrevista_personas AS ep "
+            "WHERE ep.hogar_id = p.hogar_id AND ep.pd8_anios_cumplidos < 18 "
+            "AND ep.pd8_anios_cumplidos >= 5 AND lower(ep.pe2_descripcion) = 'no')"
+        )
+
+    if kwargs.get("sin_empleo"):
+        conditions.append(
+            "NOT EXISTS (SELECT 1 FROM rsh.entrevista_personas AS ep "
+            "WHERE ep.hogar_id = p.hogar_id AND lower(ep.ie1_descripcion) LIKE '%trabaj%')"
+        )
+
     # Filtros que requieren JOIN con inseguridad
     if nivel_inseg := kwargs.get("nivel_inseguridad"):
         joins_needed.add("inseguridad")
@@ -120,6 +180,12 @@ def _build_joins(joins_needed: set[str]) -> str:
         join_clauses.append("""
             LEFT JOIN rsh.hogares_inseguridad_alimentaria AS i
             ON p.hogar_id = i.hogar_id
+        """)
+
+    if "hogares" in joins_needed:
+        join_clauses.append("""
+            LEFT JOIN rsh.entrevista_hogares AS h
+            ON p.hogar_id = h.hogar_id
         """)
 
     return "\n".join(join_clauses)
@@ -519,6 +585,46 @@ def query_catalogos(client) -> dict:
     """
     pueblo_result = client.query(pueblo_query)
     catalogos["pueblos"] = [row[0] for row in pueblo_result.result_rows]
+
+    # Fuentes de agua
+    agua_query = """
+        SELECT DISTINCT ch10_descripcion
+        FROM rsh.entrevista_hogares
+        WHERE ch10_descripcion != ''
+        ORDER BY ch10_descripcion
+    """
+    agua_result = client.query(agua_query)
+    catalogos["fuentes_agua"] = [row[0] for row in agua_result.result_rows]
+
+    # Tipos sanitario
+    sanitario_query = """
+        SELECT DISTINCT ch13_descripcion
+        FROM rsh.entrevista_hogares
+        WHERE ch13_descripcion != ''
+        ORDER BY ch13_descripcion
+    """
+    sanitario_result = client.query(sanitario_query)
+    catalogos["tipos_sanitario"] = [row[0] for row in sanitario_result.result_rows]
+
+    # Tipos alumbrado
+    alumbrado_query = """
+        SELECT DISTINCT ch16_descripcion
+        FROM rsh.entrevista_hogares
+        WHERE ch16_descripcion != ''
+        ORDER BY ch16_descripcion
+    """
+    alumbrado_result = client.query(alumbrado_query)
+    catalogos["tipos_alumbrado"] = [row[0] for row in alumbrado_result.result_rows]
+
+    # Combustibles cocina
+    combustible_query = """
+        SELECT DISTINCT ch06_descripcion
+        FROM rsh.entrevista_hogares
+        WHERE ch06_descripcion != ''
+        ORDER BY ch06_descripcion
+    """
+    combustible_result = client.query(combustible_query)
+    catalogos["combustibles_cocina"] = [row[0] for row in combustible_result.result_rows]
 
     return catalogos
 

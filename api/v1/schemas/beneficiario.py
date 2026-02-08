@@ -20,6 +20,10 @@ class CatalogosResponse(BaseModel):
     fases: list[str] = []
     comunidades_linguisticas: list[str] = []
     pueblos: list[str] = []
+    fuentes_agua: list[str] = []
+    tipos_sanitario: list[str] = []
+    tipos_alumbrado: list[str] = []
+    combustibles_cocina: list[str] = []
 
 
 class MunicipioItem(BaseModel):
@@ -56,6 +60,21 @@ class BeneficiarioFilters(BaseModel):
     tiene_discapacidad: Optional[bool] = None
     # Inseguridad alimentaria (requiere JOIN con hogares_inseguridad_alimentaria)
     nivel_inseguridad: Optional[str] = None
+    # Servicios basicos (requieren JOIN con entrevista_hogares)
+    fuente_agua: Optional[str] = None
+    tipo_sanitario: Optional[str] = None
+    alumbrado: Optional[str] = None
+    combustible_cocina: Optional[str] = None
+    # Bienes del hogar (requieren JOIN con entrevista_hogares)
+    tiene_internet: Optional[bool] = None
+    tiene_computadora: Optional[bool] = None
+    tiene_refrigerador: Optional[bool] = None
+    # Hacinamiento (requiere JOIN con entrevista_hogares)
+    con_hacinamiento: Optional[bool] = None
+    # Educacion y empleo (requieren subquery en entrevista_personas)
+    con_analfabetismo: Optional[bool] = None
+    con_menores_sin_escuela: Optional[bool] = None
+    sin_empleo: Optional[bool] = None
     # Busqueda
     buscar: Optional[str] = None
     # Temporal

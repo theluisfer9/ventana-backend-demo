@@ -63,6 +63,10 @@ def catalogos(
         fases=raw["fases"],
         comunidades_linguisticas=raw["comunidades_linguisticas"],
         pueblos=raw["pueblos"],
+        fuentes_agua=raw.get("fuentes_agua", []),
+        tipos_sanitario=raw.get("tipos_sanitario", []),
+        tipos_alumbrado=raw.get("tipos_alumbrado", []),
+        combustibles_cocina=raw.get("combustibles_cocina", []),
     )
 
 
