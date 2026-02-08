@@ -7,6 +7,8 @@ from api.v1.config.database import get_ch_client
 from api.v1.dependencies.permission_dependency import RequirePermission
 from api.v1.dependencies.beneficiario_dependency import beneficiario_filters_dep
 from api.v1.auth.permissions import PermissionCode
+from api.v1.schemas.persona import PersonaResumen
+from api.v1.schemas.vivienda import ViviendaDetalle
 from api.v1.schemas.beneficiario import (
     BeneficiarioFilters,
     BeneficiarioDetalle,
@@ -27,10 +29,14 @@ from api.v1.services.rsh.queries import (
     query_catalogos,
     query_municipios,
     query_lugares_poblados,
+    query_personas_hogar,
+    query_vivienda_hogar,
 )
 from api.v1.services.rsh.mappers import (
     row_to_beneficiario_resumen,
     row_to_beneficiario_detalle,
+    row_to_persona,
+    row_to_vivienda,
 )
 from api.v1.services.beneficiario.export import generate_excel, generate_pdf
 
@@ -187,6 +193,33 @@ def listar(
     rows, total = query_beneficiarios_lista(client, offset=offset, limit=limit, **filter_kwargs)
     items = [row_to_beneficiario_resumen(r) for r in rows]
     return PaginatedBeneficiarios(items=items, total=total, offset=offset, limit=limit)
+
+
+@router.get("/{hogar_id}/personas", response_model=list[PersonaResumen])
+def get_personas_hogar(
+    hogar_id: int,
+    current_user=Depends(RequirePermission(PermissionCode.BENEFICIARIES_READ)),
+    client=Depends(get_ch_client),
+):
+    """Obtener todas las personas de un hogar."""
+    rows = query_personas_hogar(client, hogar_id)
+    return [row_to_persona(r) for r in rows]
+
+
+@router.get("/{hogar_id}/vivienda", response_model=ViviendaDetalle)
+def vivienda_hogar(
+    hogar_id: int,
+    current_user=Depends(RequirePermission(PermissionCode.BENEFICIARIES_READ)),
+    client=Depends(get_ch_client),
+):
+    """Detalle de vivienda, servicios, bienes y seguridad alimentaria de un hogar."""
+    row = query_vivienda_hogar(client, hogar_id)
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Vivienda no encontrada",
+        )
+    return row_to_vivienda(row)
 
 
 @router.get("/{hogar_id}")

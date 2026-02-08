@@ -577,3 +577,120 @@ def query_lugares_poblados(client, municipio_codigo: str) -> list[dict]:
         {"codigo": row[0], "nombre": row[1]}
         for row in result.result_rows
     ]
+
+
+def query_personas_hogar(client, hogar_id: int) -> list[dict]:
+    """Consulta las personas de un hogar desde entrevista_personas."""
+    query = """
+        SELECT
+            personas_id,
+            pd1_numero_correlativo_persona_hogar,
+            pd4_numero_documento_identificacion,
+            pd5_1_primer_nombre,
+            pd5_2_segundo_nombre,
+            pd5_3_tercer_nombre,
+            pd5_4_cuarto_nombre,
+            pd5_5_primer_apellido,
+            pd5_6_segundo_apellido,
+            pd5_7_apellido_casada,
+            pd6_descripcion,
+            pd7_fecha_nacimiento,
+            pd8_anios_cumplidos,
+            pd9_descripcion,
+            pd10_celular,
+            pd11_descripcion,
+            pd12_descripcion,
+            pd13_descripcion,
+            pd14_descripcion,
+            ps1_1_descripcion,
+            ps1_2_descripcion,
+            ps1_3_descripcion,
+            ps1_4_descripcion,
+            ps1_5_descripcion,
+            ps1_6_descripcion,
+            ps13_descripcion,
+            pe1_descripcion,
+            pe2_descripcion,
+            pe7_descripcion,
+            ie1_descripcion,
+            ie3_descripcion
+        FROM rsh.entrevista_personas
+        WHERE hogar_id = {hogar_id:Int64}
+        ORDER BY pd1_numero_correlativo_persona_hogar
+    """
+    result = client.query(query, parameters={"hogar_id": hogar_id})
+    return [
+        dict(zip(result.column_names, row))
+        for row in result.result_rows
+    ]
+
+
+def query_vivienda_hogar(client, hogar_id: int) -> dict | None:
+    """Consulta detalle de vivienda y hogar con servicios, bienes y seguridad alimentaria."""
+    query = """
+        SELECT
+            v.cv1_condicion_vivienda,
+            v.cv2_tipo_vivienda_particular,
+            v.cv3_material_predominante_en_paredes_exteriores,
+            v.cv4_material_predominante_techo,
+            v.cv5_material_predominante_piso,
+            v.cv7_vivienda_que_ocupa_este_hogar_es,
+            v.cv8_persona_propietaria_de_esta_vivienda_es,
+            h.ih1_personas_viven_habitualmente_vivienda,
+            h.ch2_cuantas_personas_residen_habitualmente_en_hogar,
+            h.ch2_numero_habitantes_hombres,
+            h.ch2_numero_habitantes_mujeres,
+            h.ch2_numero_habitantes_ninios,
+            h.ch2_numero_habitantes_ninias,
+            h.ch3_cuantos_cuartos_dispone_hogar,
+            h.ch4_total_cuartos_utiliza_como_dormitorios,
+            h.ch05_dispone_en_hogar_un_cuarto_exclusivo_para_cocinar,
+            h.ch06_descripcion,
+            h.ch07_descripcion,
+            h.ch08_descripcion,
+            h.ch09_descripcion,
+            h.ch10_descripcion,
+            h.ch11_mes_pasado_dias_completos_sin_agua,
+            h.ch12_descripcion,
+            h.ch13_descripcion,
+            h.ch14_uso_servicio_sanitario,
+            h.ch15_descripcion,
+            h.ch16_descripcion,
+            h.ch17_mes_pasado_cuantos_dias_continuos_sin_energia_electrica,
+            h.ch19_descripcion,
+            h.ch_18_bien_hogar_radio,
+            h.ch_18_bien_hogar_estufa_lenia,
+            h.ch_18_bien_hogar_estufa_gas,
+            h.ch_18_bien_hogar_televisor,
+            h.ch_18_bien_hogar_refrigerador,
+            h.ch_18_bien_hogar_lavadora,
+            h.ch_18_bien_hogar_compu_laptop,
+            h.ch_18_bien_hogar_internet,
+            h.ch_18_bien_hogar_moto,
+            h.ch_18_bien_hogar_carro,
+            h.sn1_descripcion,
+            h.sn2_descripcion,
+            h.sn3_aduto_sin_alimentacion_saludable,
+            h.sn3_nino_sin_alimentacion_saludable,
+            h.sn4_adulto_alimentacion_variedad,
+            h.sn4_nino_alimentacion_variedad,
+            h.sn5_adulto_sin_tiempo_comida,
+            h.sn5_nino_sin_tiempo_comida,
+            h.sn6_adulto_comio_menos,
+            h.sn6_nino_no_comio_menos,
+            h.sn7_adulto_sintio_hambre,
+            h.sn7_nino_sintio_hambre,
+            h.sn8_adulto_comio_un_tiempo,
+            h.sn8_menor18_comio_un_tiempo
+        FROM rsh.pobreza_hogar AS p
+        LEFT JOIN rsh.entrevistas_viviendas AS v
+            ON p.vivienda_id = v.id
+        LEFT JOIN rsh.entrevista_hogares AS h
+            ON p.hogar_id = h.hogar_id
+        WHERE p.hogar_id = {hogar_id:Int64}
+        LIMIT 1
+    """
+    result = client.query(query, parameters={"hogar_id": hogar_id})
+    if not result.result_rows:
+        return None
+    return dict(zip(result.column_names, result.result_rows[0]))
