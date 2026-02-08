@@ -1,132 +1,180 @@
-from pydantic import BaseModel, Field
-from typing import Optional, List
+from pydantic import BaseModel
+from typing import Optional
 
 
 # ── Catalogos ─────────────────────────────────────────────────────────
 
-class CatalogoOut(BaseModel):
+class CatalogoItem(BaseModel):
     code: str
     name: str
-
-
-class MunicipioOut(BaseModel):
-    code: str
-    name: str
-    departamento_code: str
 
 
 class CatalogosResponse(BaseModel):
-    departamentos: List[CatalogoOut]
-    instituciones: List[CatalogoOut]
-    tipos_intervencion: List[CatalogoOut]
-    niveles_privacion: List[CatalogoOut]
+    """Catalogos dinamicos derivados de los datos RSH reales."""
+    departamentos: list[CatalogoItem] = []
+    clasificaciones_ipm: list[str] = []
+    clasificaciones_pmt: list[str] = []
+    clasificaciones_nbi: list[str] = []
+    areas: list[str] = []
+    niveles_inseguridad: list[str] = []
+    fases: list[str] = []
+    comunidades_linguisticas: list[str] = []
+    pueblos: list[str] = []
+
+
+class MunicipioItem(BaseModel):
+    code: str
+    name: str
+
+
+class LugarPobladoItem(BaseModel):
+    code: str
+    name: str
 
 
 # ── Filtros ───────────────────────────────────────────────────────────
 
 class BeneficiarioFilters(BaseModel):
+    """Filtros para consulta de hogares/beneficiarios RSH."""
     # Geograficos
-    departamento_code: Optional[str] = None
-    municipio_code: Optional[str] = None
-    # Intervencion
-    institucion_code: Optional[str] = None
-    tipo_intervencion_code: Optional[str] = None
-    sin_intervencion: Optional[bool] = None
-    # Demograficos
-    genero: Optional[str] = None
-    edad_min: Optional[int] = None
-    edad_max: Optional[int] = None
-    miembros_hogar_min: Optional[int] = None
-    miembros_hogar_max: Optional[int] = None
-    con_menores_5: Optional[bool] = None
-    con_adultos_mayores: Optional[bool] = None
+    departamento_codigo: Optional[str] = None
+    municipio_codigo: Optional[str] = None
+    lugar_poblado_codigo: Optional[str] = None
+    area: Optional[str] = None
+    # Jefe de hogar
+    sexo_jefe: Optional[str] = None
     # Pobreza
-    nivel_privacion: Optional[str] = None
     ipm_min: Optional[float] = None
     ipm_max: Optional[float] = None
+    ipm_clasificacion: Optional[str] = None
+    pmt_clasificacion: Optional[str] = None
+    nbi_clasificacion: Optional[str] = None
+    # Demograficos (requieren JOIN con hogares_datos_demograficos)
+    tiene_menores_5: Optional[bool] = None
+    tiene_adultos_mayores: Optional[bool] = None
+    tiene_embarazadas: Optional[bool] = None
+    tiene_discapacidad: Optional[bool] = None
+    # Inseguridad alimentaria (requiere JOIN con hogares_inseguridad_alimentaria)
+    nivel_inseguridad: Optional[str] = None
     # Busqueda
     buscar: Optional[str] = None
+    # Temporal
+    anio: Optional[int] = None
+    # Fase intervencion
+    fase: Optional[str] = None
 
 
-# ── Intervencion ──────────────────────────────────────────────────────
-
-class IntervencionOut(BaseModel):
-    institucion_code: str
-    institucion_name: str
-    tipo_code: str
-    tipo_name: str
-
-
-# ── Beneficiario resumen (para lista) ────────────────────────────────
+# ── Beneficiario resumen (para listados) ──────────────────────────────
 
 class BeneficiarioResumen(BaseModel):
-    id: int
-    dpi: str
-    nombre_completo: str
-    genero: str
-    edad: int
-    departamento: str
-    municipio: str
-    ipm: float
-    nivel_privacion: str
-    num_intervenciones: int
+    """Vista resumida de un hogar para listados paginados."""
+    hogar_id: int
+    cui_jefe_hogar: Optional[int] = None
+    nombre_completo: str = ""
+    sexo_jefe_hogar: str = ""
+    departamento: str = ""
+    departamento_codigo: str = ""
+    municipio: str = ""
+    municipio_codigo: str = ""
+    lugar_poblado: str = ""
+    area: str = ""
+    numero_personas: int = 0
+    hombres: int = 0
+    mujeres: int = 0
+    ipm_gt: float = 0.0
+    ipm_gt_clasificacion: str = ""
+    pmt: float = 0.0
+    pmt_clasificacion: str = ""
+    nbi: float = 0.0
+    nbi_clasificacion: str = ""
 
 
-# ── Beneficiario detalle ─────────────────────────────────────────────
+# ── Beneficiario detalle ──────────────────────────────────────────────
 
-class BeneficiarioOut(BaseModel):
-    id: int
-    dpi: str
-    primer_nombre: str
-    segundo_nombre: str
-    primer_apellido: str
-    segundo_apellido: str
-    nombre_completo: str
-    genero: str
-    fecha_nacimiento: str
-    edad: int
-    departamento_code: str
-    departamento: str
-    municipio_code: str
-    municipio: str
-    miembros_hogar: int
-    menores_5: int
-    adultos_mayores: int
-    ipm: float
-    nivel_privacion: str
-    intervenciones: List[IntervencionOut]
+class BeneficiarioDetalle(BeneficiarioResumen):
+    """Vista detallada de un hogar con datos demograficos y alimentarios."""
+    # Geolocalizacion
+    latitud: Optional[float] = None
+    longitud: Optional[float] = None
+    direccion: str = ""
+    # Contacto
+    celular_jefe: Optional[int] = None
+    cui_madre: Optional[int] = None
+    nombre_madre: str = ""
+    # Fase
+    fase: str = ""
+    fase_estado: str = ""
+    anio: Optional[int] = None
+    # Demograficos (de hogares_datos_demograficos)
+    total_personas: Optional[int] = None
+    menores_5: Optional[int] = None
+    adultos_mayores: Optional[int] = None
+    personas_embarazadas: Optional[int] = None
+    personas_con_dificultad: Optional[int] = None
+    tipo_jefatura: str = ""
+    comunidad_linguistica: str = ""
+    pueblo_de_pertenencia: str = ""
+    # Inseguridad alimentaria (de hogares_inseguridad_alimentaria)
+    nivel_inseguridad_alimentaria: str = ""
+    puntos_elcsa: Optional[int] = None
+    # Conteos por grupo etario
+    primera_infancia: Optional[int] = None
+    ninos: Optional[int] = None
+    adolescentes: Optional[int] = None
+    jovenes: Optional[int] = None
+    adultos: Optional[int] = None
 
 
 # ── Paginacion ────────────────────────────────────────────────────────
 
 class PaginatedBeneficiarios(BaseModel):
-    items: List[BeneficiarioResumen]
+    items: list[BeneficiarioResumen]
     total: int
     offset: int
     limit: int
 
 
-# ── Stats ─────────────────────────────────────────────────────────────
+# ── Estadisticas ──────────────────────────────────────────────────────
+
+class DepartamentoCount(BaseModel):
+    departamento: str
+    codigo: str
+    cantidad: int
+
+
+class ClasificacionCount(BaseModel):
+    clasificacion: str
+    cantidad: int
+
 
 class BeneficiarioStats(BaseModel):
-    total: int
-    promedio_ipm: float
-    genero_f: int
-    genero_m: int
-    hogares_con_menores: int
-    hogares_con_adultos_mayores: int
-    por_nivel_privacion: dict
-    por_departamento: dict
+    """Estadisticas agregadas para filtros aplicados."""
+    total: int = 0
+    promedio_ipm: float = 0.0
+    total_mujeres_jefas: int = 0
+    total_hombres_jefes: int = 0
+    total_personas: int = 0
+    total_hombres: int = 0
+    total_mujeres: int = 0
+    por_departamento: list[DepartamentoCount] = []
+    por_ipm_clasificacion: list[ClasificacionCount] = []
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────
 
+class InseguridadCount(BaseModel):
+    nivel: str
+    cantidad: int
+
+
 class DashboardStats(BaseModel):
-    total_beneficiarios: int
-    departamentos_cubiertos: int
-    cobertura_intervenciones: float = Field(
-        description="Porcentaje de beneficiarios con al menos una intervencion"
-    )
-    promedio_ipm: float
-    por_departamento: dict
-    top_intervenciones: List[dict]
+    """Estadisticas globales para el dashboard principal."""
+    total_hogares: int = 0
+    departamentos_cubiertos: int = 0
+    municipios_cubiertos: int = 0
+    promedio_ipm: float = 0.0
+    total_personas: int = 0
+    hogares_pobres: int = 0
+    hogares_no_pobres: int = 0
+    por_departamento: list[DepartamentoCount] = []
+    inseguridad_alimentaria: list[InseguridadCount] = []

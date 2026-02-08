@@ -14,39 +14,41 @@ from fpdf import FPDF
 # ── Columnas del reporte ─────────────────────────────────────────────
 
 COLUMNS = [
-    "Nombre Completo",
-    "DPI",
-    "Genero",
-    "Edad",
+    "ID Hogar",
+    "CUI Jefe",
+    "Nombre Jefe Hogar",
+    "Sexo Jefe",
     "Departamento",
     "Municipio",
+    "Lugar Poblado",
+    "Area",
+    "No. Personas",
     "IPM",
-    "Nivel Privacion",
-    "# Intervenciones",
-    "Detalle Intervenciones",
+    "Clasif. IPM",
+    "PMT",
+    "Clasif. PMT",
 ]
 
-# Columnas para PDF (sin detalle intervenciones por espacio)
-PDF_COLUMNS = COLUMNS[:-1]
+# Columnas para PDF (sin PMT por espacio)
+PDF_COLUMNS = COLUMNS[:11]
 
 
 def _row(b: dict) -> list:
-    """Convierte un beneficiario enriquecido a fila de reporte."""
-    detalle = "; ".join(
-        f"{iv['tipo_name']} ({iv['institucion_name']})"
-        for iv in b.get("intervenciones", [])
-    )
+    """Convierte un beneficiario RSH a fila de reporte."""
     return [
+        b.get("hogar_id", ""),
+        b.get("cui_jefe_hogar", ""),
         b.get("nombre_completo", ""),
-        b.get("dpi", ""),
-        "Femenino" if b.get("genero") == "F" else "Masculino",
-        b.get("edad", ""),
+        "Femenino" if b.get("sexo_jefe_hogar") == "F" else "Masculino",
         b.get("departamento", ""),
         b.get("municipio", ""),
-        b.get("ipm", 0),
-        b.get("nivel_privacion", ""),
-        b.get("num_intervenciones", 0),
-        detalle,
+        b.get("lugar_poblado", ""),
+        b.get("area", ""),
+        b.get("numero_personas", 0),
+        round(b.get("ipm_gt", 0), 4),
+        b.get("ipm_gt_clasificacion", ""),
+        round(b.get("pmt", 0), 4),
+        b.get("pmt_clasificacion", ""),
     ]
 
 
@@ -133,8 +135,8 @@ def generate_pdf(rows: list[dict]) -> BytesIO:
     pdf.set_auto_page_break(auto=True, margin=20)
     pdf.add_page()
 
-    # Anchos de columna (landscape A4 ~277mm usable)
-    col_widths = [52, 30, 22, 14, 34, 34, 16, 30, 22, 23]  # total ~277
+    # Anchos de columna para 11 columnas (landscape A4 ~277mm usable)
+    col_widths = [20, 22, 50, 18, 34, 34, 30, 18, 14, 14, 28]  # total ~282 for 11 cols
 
     # Header de tabla
     pdf.set_font("Helvetica", "B", 8)
@@ -163,7 +165,7 @@ def generate_pdf(rows: list[dict]) -> BytesIO:
             # Truncar si es muy largo
             if len(val) > 35:
                 val = val[:32] + "..."
-            align = "C" if i in (2, 3, 6, 8) else "L"
+            align = "C" if i in (0, 3, 7, 8, 9, 10) else "L"
             pdf.cell(col_widths[i], 7, val, border=1, fill=fill, align=align)
         pdf.ln()
 

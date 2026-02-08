@@ -206,3 +206,49 @@ def get_db_sql() -> Generator:
         yield db
     finally:
         db.close()
+
+
+# ─── ClickHouse (RSH) ───────────────────────────────────────────────
+import clickhouse_connect
+
+def _ch_is_active() -> bool:
+    return validar_env_var_bool(
+        validar_env_var_string(f"{env_mode}_CH_ACTIVA", "false")
+    )
+
+def get_clickhouse_client():
+    """Crea y retorna un cliente ClickHouse."""
+    if not _ch_is_active():
+        return None
+
+    host = validar_env_var_string(f"{env_mode}_CH_HOST", "localhost")
+    port = int(validar_env_var_string(f"{env_mode}_CH_PORT", "8123"))
+    user = validar_env_var_string(f"{env_mode}_CH_USER", "default")
+    password = validar_env_var_string(f"{env_mode}_CH_PASSWORD", "")
+    database = validar_env_var_string(f"{env_mode}_CH_DATABASE", "rsh")
+    secure = validar_env_var_bool(
+        validar_env_var_string(f"{env_mode}_CH_SECURE", "false")
+    )
+
+    return clickhouse_connect.get_client(
+        host=host,
+        port=port,
+        username=user,
+        password=password,
+        database=database,
+        secure=secure,
+        query_limit=0,
+    )
+
+
+def get_ch_client():
+    """FastAPI dependency que provee un cliente ClickHouse."""
+    if not _ch_is_active():
+        raise RuntimeError(
+            f"ClickHouse no está activo (revisa {env_mode}_CH_ACTIVA) o falta configuración."
+        )
+    client = get_clickhouse_client()
+    try:
+        yield client
+    finally:
+        client.close()
