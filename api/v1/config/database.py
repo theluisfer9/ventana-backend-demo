@@ -241,8 +241,30 @@ def get_clickhouse_client():
     )
 
 
+def _ch_is_mock() -> bool:
+    return validar_env_var_bool(
+        validar_env_var_string(f"{env_mode}_CH_MOCK", "false")
+    )
+
+
+_mock_ch_client = None
+
+
+def _get_mock_ch_client():
+    """Singleton del mock client para no regenerar datos en cada request."""
+    global _mock_ch_client
+    if _mock_ch_client is None:
+        from tests.v1.mock_ch_client import MockClickHouseClient
+        _mock_ch_client = MockClickHouseClient()
+    return _mock_ch_client
+
+
 def get_ch_client():
-    """FastAPI dependency que provee un cliente ClickHouse."""
+    """FastAPI dependency que provee un cliente ClickHouse (o mock)."""
+    if _ch_is_mock():
+        yield _get_mock_ch_client()
+        return
+
     if not _ch_is_active():
         raise RuntimeError(
             f"ClickHouse no está activo (revisa {env_mode}_CH_ACTIVA) o falta configuración."

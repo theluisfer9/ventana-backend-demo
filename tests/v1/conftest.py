@@ -15,7 +15,7 @@ from api.v1.models.permission import Permission
 from api.v1.models.user_session import UserSession
 from api.v1.auth.password import hash_password
 from main import app
-from api.v1.config.database import get_sync_db_pg
+from api.v1.config.database import get_sync_db_pg, get_ch_client
 
 load_dotenv()
 
@@ -329,5 +329,54 @@ def authenticated_regular_client(db_session, test_regular_user):
         yield client
 
     # Restore original
+    RequirePermission.__call__ = original_call
+    app.dependency_overrides.clear()
+
+
+# ==================== Fixtures ClickHouse (RSH) ====================
+
+@pytest.fixture
+def mock_ch():
+    """Provides a MockClickHouseClient with generated RSH data."""
+    from tests.v1.mock_ch_client import MockClickHouseClient
+    return MockClickHouseClient()
+
+
+@pytest.fixture
+def authenticated_ch_client(db_session, test_admin_user, mock_ch):
+    """
+    Provides an authenticated client with admin user and mocked ClickHouse.
+    Overrides get_ch_client, get_current_user, and RequirePermission.
+    """
+    from api.v1.dependencies.auth_dependency import get_current_user, get_token_from_header
+    from api.v1.dependencies.permission_dependency import RequirePermission
+
+    def override_get_db():
+        yield db_session
+
+    def override_get_current_user():
+        return test_admin_user
+
+    def override_get_token():
+        return "mock_token"
+
+    def override_get_ch_client():
+        yield mock_ch
+
+    original_call = RequirePermission.__call__
+
+    def mock_call(self, current_user=None):
+        return test_admin_user
+
+    RequirePermission.__call__ = mock_call
+
+    app.dependency_overrides[get_sync_db_pg] = override_get_db
+    app.dependency_overrides[get_current_user] = override_get_current_user
+    app.dependency_overrides[get_token_from_header] = override_get_token
+    app.dependency_overrides[get_ch_client] = override_get_ch_client
+
+    with TestClient(app) as client:
+        yield client
+
     RequirePermission.__call__ = original_call
     app.dependency_overrides.clear()
