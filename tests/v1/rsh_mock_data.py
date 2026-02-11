@@ -160,6 +160,7 @@ class RSHMockDataset:
         self.viviendas: list[dict] = []
         self.demograficos: list[dict] = []
         self.inseguridad: list[dict] = []
+        self.beneficios_x_hogar: list[dict] = []
 
         # Indices para lookup rápido
         self._hogar_idx: dict[int, int] = {}
@@ -167,6 +168,7 @@ class RSHMockDataset:
         self._inseg_idx: dict[int, int] = {}
         self._viv_idx: dict[int, int] = {}
         self._personas_idx: dict[int, list[int]] = {}
+        self._beneficio_idx: dict[int, int] = {}
 
         self._generate(n_hogares, personas_por_hogar)
 
@@ -389,6 +391,48 @@ class RSHMockDataset:
 
             self._personas_idx[hogar_id] = persona_indices
 
+        # Beneficios x hogar (FODES, MAGA, MIDES)
+        beneficios_list = self.beneficios_x_hogar
+        for i in range(len(hogares)):
+            hogar = hogares[i]
+            hogar_id = hogar["hogar_id"]
+
+            beneficio = {
+                "hogar_id": hogar_id,
+                "ig3_departamento": hogar["departamento"],
+                "ig3_departamento_codigo": hogar["departamento_codigo"],
+                "ig4_municipio": hogar["municipio"],
+                "ig4_municipio_codigo": hogar["municipio_codigo"],
+                "ig5_lugar_poblado": hogar["lugar_poblado"],
+                "area": hogar["area"],
+                "numero_personas": hogar["numero_personas"],
+                "hombres": hogar["hombres"],
+                "mujeres": hogar["mujeres"],
+                "ipm_gt": hogar["ipm_gt"],
+                "ipm_gt_clasificacion": hogar["ipm_gt_clasificacion"],
+                # Programas
+                "prog_fodes": 1 if random.random() < 0.30 else 0,
+                "prog_maga": 1 if random.random() < 0.25 else 0,
+                "prog_mides": 1 if random.random() < 0.40 else 0,
+                # FODES interventions
+                "estufa_mejorada": random.choice([0, 1]),
+                "ecofiltro": random.choice([0, 1]),
+                "letrina": random.choice([0, 1]),
+                "repello": random.choice([0, 1]),
+                "piso": random.choice([0, 1]),
+                # MAGA interventions
+                "sembro": random.choice([0, 1]),
+                "crio_animal": random.choice([0, 1]),
+                # MIDES interventions
+                "bono_unico": random.choice([0, 1]),
+                "bono_salud": random.choice([0, 1]),
+                "bono_educacion": random.choice([0, 1]),
+                "bolsa_social": random.choice([0, 1]),
+            }
+
+            self._beneficio_idx[hogar_id] = len(beneficios_list)
+            beneficios_list.append(beneficio)
+
     # ── Accessors con lookup O(1) ────────────────────────────────────
 
     def get_hogar(self, hogar_id: int) -> dict | None:
@@ -416,3 +460,10 @@ class RSHMockDataset:
 
     def get_nonexistent_hogar_id(self) -> int:
         return 999999
+
+    def get_beneficios_x_hogar(self) -> list[dict]:
+        return self.beneficios_x_hogar
+
+    def get_beneficio(self, hogar_id: int) -> dict | None:
+        idx = self._beneficio_idx.get(hogar_id)
+        return self.beneficios_x_hogar[idx] if idx is not None else None

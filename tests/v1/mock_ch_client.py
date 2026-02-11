@@ -31,6 +31,33 @@ class MockClickHouseClient:
         sql_clean = " ".join(sql.split()).lower()
         params = parameters or {}
 
+        # ── Consulta: handlers for beneficios_x_hogar (FODES) ──
+        if "beneficios_x_hogar" in sql_clean:
+            # Dashboard global for consulta
+            if "uniq(ig3_departamento_codigo)" in sql_clean:
+                return self._handle_consulta_dashboard(sql_clean, params)
+
+            # Intervenciones count
+            if "sumif" in sql_clean:
+                return self._handle_consulta_intervenciones(sql_clean, params)
+
+            # Count for consulta
+            if "select count()" in sql_clean:
+                return self._handle_consulta_count(sql_clean, params)
+
+            # Lista for consulta (has limit+offset)
+            if "limit" in sql_clean and "offset" in sql_clean:
+                if "hogar_id" not in params or "offset" in params:
+                    return self._handle_consulta_lista(sql_clean, params)
+
+            # Detalle for consulta
+            if "hogar_id" in params:
+                return self._handle_consulta_detalle(params, sql_clean)
+
+            # Catalogos DISTINCT for consulta
+            if "distinct" in sql_clean and "ig3_departamento_codigo" in sql_clean:
+                return self._handle_consulta_catalogo_departamentos(sql_clean, params)
+
         # ── Dashboard: metricas globales (must be before count handler) ──
         if "uniq(departamento_codigo)" in sql_clean or "uniq(municipio_codigo)" in sql_clean:
             return self._handle_dashboard_global()
@@ -95,6 +122,40 @@ class MockClickHouseClient:
         return MockQueryResult()
 
     # ── Handlers ─────────────────────────────────────────────────────
+
+    _PROG_COLUMNS = ["prog_fodes", "prog_maga", "prog_mides"]
+    _ALL_INTERVENTIONS = [
+        "estufa_mejorada", "ecofiltro", "letrina", "repello", "piso",
+        "sembro", "crio_animal",
+        "bono_unico", "bono_salud", "bono_educacion", "bolsa_social",
+    ]
+
+    def _apply_consulta_filters(self, beneficios: list[dict], params: dict, sql_clean: str = "") -> list[dict]:
+        """Aplica filtros a beneficios_x_hogar para consultas institucionales."""
+        filtered = beneficios
+
+        # ── Base filter: prog_X = 1 (dinamico) ──
+        for prog_col in self._PROG_COLUMNS:
+            if f"{prog_col} = 1" in sql_clean or f"{prog_col}=1" in sql_clean:
+                filtered = [b for b in filtered if b.get(prog_col) == 1]
+
+        # ── Filtros geograficos ──
+        if "depto" in params:
+            filtered = [b for b in filtered if b["ig3_departamento_codigo"].strip() == params["depto"]]
+        if "muni" in params:
+            filtered = [b for b in filtered if b["ig4_municipio_codigo"].strip() == params["muni"]]
+
+        # ── Buscar por hogar_id ──
+        if "buscar" in params:
+            term = params["buscar"].strip("%").lower()
+            filtered = [b for b in filtered if term in str(b["hogar_id"])]
+
+        # ── Filtros de intervenciones (dinamico) ──
+        for col in self._ALL_INTERVENTIONS:
+            if f"{col} = 1" in sql_clean or f"{col}=1" in sql_clean:
+                filtered = [b for b in filtered if b.get(col) == 1]
+
+        return filtered
 
     def _apply_filters(self, hogares: list[dict], params: dict, sql_clean: str = "") -> list[dict]:
         """Aplica filtros a la lista de hogares, incluyendo cross-table."""
@@ -254,6 +315,98 @@ class MockClickHouseClient:
             filtered = [h for h in filtered if h["hogar_id"] not in employed]
 
         return filtered
+
+    def _handle_consulta_count(self, sql_clean: str, params: dict) -> MockQueryResult:
+        """Count para beneficios_x_hogar."""
+        filtered = self._apply_consulta_filters(self.dataset.beneficios_x_hogar, params, sql_clean)
+        return MockQueryResult(
+            column_names=["total"],
+            result_rows=[(len(filtered),)],
+        )
+
+    def _handle_consulta_lista(self, sql_clean: str, params: dict) -> MockQueryResult:
+        """Lista paginada de beneficios_x_hogar."""
+        filtered = self._apply_consulta_filters(self.dataset.beneficios_x_hogar, params, sql_clean)
+        offset = params.get("offset", 0)
+        limit = params.get("limit", 100)
+        page = filtered[offset: offset + limit]
+
+        base_columns = [
+            "hogar_id", "ig3_departamento", "ig3_departamento_codigo",
+            "ig4_municipio", "ig4_municipio_codigo", "ig5_lugar_poblado",
+            "area", "numero_personas", "hombres", "mujeres",
+            "ipm_gt", "ipm_gt_clasificacion",
+        ]
+        interv_cols = [c for c in self._ALL_INTERVENTIONS if c in sql_clean]
+        columns = base_columns + interv_cols
+
+        rows = [tuple(b.get(c) for c in columns) for b in page]
+        return MockQueryResult(column_names=columns, result_rows=rows)
+
+    def _handle_consulta_detalle(self, params: dict, sql_clean: str = "") -> MockQueryResult:
+        """Detalle de un beneficio por hogar_id."""
+        hogar_id = params["hogar_id"]
+        beneficio = self.dataset.get_beneficio(hogar_id)
+
+        if not beneficio:
+            return MockQueryResult(column_names=[], result_rows=[])
+
+        # Check base filter dynamically
+        for prog_col in self._PROG_COLUMNS:
+            if f"{prog_col} = 1" in sql_clean:
+                if beneficio.get(prog_col) != 1:
+                    return MockQueryResult(column_names=[], result_rows=[])
+
+        base_columns = [
+            "hogar_id", "ig3_departamento", "ig3_departamento_codigo",
+            "ig4_municipio", "ig4_municipio_codigo", "ig5_lugar_poblado",
+            "area", "numero_personas", "hombres", "mujeres",
+            "ipm_gt", "ipm_gt_clasificacion",
+        ]
+        interv_cols = [c for c in self._ALL_INTERVENTIONS if c in sql_clean]
+        columns = base_columns + interv_cols
+
+        row = tuple(beneficio.get(c) for c in columns)
+        return MockQueryResult(column_names=columns, result_rows=[row])
+
+    def _handle_consulta_dashboard(self, sql_clean: str, params: dict) -> MockQueryResult:
+        """Dashboard global para consulta institucional."""
+        # Filter to prog_fodes=1
+        filtered = self._apply_consulta_filters(self.dataset.beneficios_x_hogar, params, sql_clean)
+
+        total = len(filtered)
+        deptos = set(b["ig3_departamento_codigo"] for b in filtered)
+        munis = set(b["ig4_municipio_codigo"] for b in filtered)
+        total_personas = sum(b["numero_personas"] for b in filtered)
+
+        columns = ["total_hogares", "total_departamentos", "total_municipios", "total_personas"]
+        row = (total, len(deptos), len(munis), total_personas)
+
+        return MockQueryResult(column_names=columns, result_rows=[row])
+
+    def _handle_consulta_intervenciones(self, sql_clean: str, params: dict) -> MockQueryResult:
+        """Count de intervenciones institucionales."""
+        filtered = self._apply_consulta_filters(self.dataset.beneficios_x_hogar, params, sql_clean)
+
+        interv_cols = [c for c in self._ALL_INTERVENTIONS if c in sql_clean]
+        columns = interv_cols
+        row = tuple(sum(b.get(c, 0) for b in filtered) for c in interv_cols)
+
+        return MockQueryResult(column_names=columns, result_rows=[row])
+
+    def _handle_consulta_catalogo_departamentos(self, sql_clean: str, params: dict) -> MockQueryResult:
+        """DISTINCT departamentos para consulta institucional."""
+        filtered = self._apply_consulta_filters(self.dataset.beneficios_x_hogar, params, sql_clean)
+
+        seen = {}
+        for b in filtered:
+            code = b["ig3_departamento_codigo"].strip()
+            if code and code not in seen:
+                seen[code] = b["ig3_departamento"]
+
+        columns = ["codigo", "nombre"]
+        rows = [(c, n) for c, n in sorted(seen.items())]
+        return MockQueryResult(column_names=columns, result_rows=rows)
 
     def _handle_count(self, sql_clean: str, params: dict) -> MockQueryResult:
         filtered = self._apply_filters(self.dataset.hogares, params, sql_clean)
