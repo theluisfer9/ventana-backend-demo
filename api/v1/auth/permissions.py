@@ -27,6 +27,9 @@ class PermissionCode(str, Enum):
     REPORTS_ADVANCED = "reports:advanced"
     REPORTS_CREATE = "reports:create"
 
+    # Datasources
+    DATASOURCES_MANAGE = "datasources:manage"
+
     # System
     SYSTEM_CONFIG = "system:config"
     SYSTEM_MONITOR = "system:monitor"
@@ -52,6 +55,7 @@ ROLE_PERMISSIONS = {
         PermissionCode.BENEFICIARIES_EXPORT,
         PermissionCode.DATABASES_READ,
         PermissionCode.DATABASES_MANAGE,
+        PermissionCode.DATASOURCES_MANAGE,
         PermissionCode.REPORTS_READ,
         PermissionCode.REPORTS_ADVANCED,
         PermissionCode.REPORTS_CREATE,
