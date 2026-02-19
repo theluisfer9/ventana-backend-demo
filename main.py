@@ -33,6 +33,9 @@ from api.v1.models import (
     User,
     UserSession,
     Ticket,
+    DataSource,
+    DataSourceColumn,
+    SavedQuery,
 )
 
 app = FastAPI(
