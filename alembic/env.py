@@ -15,6 +15,7 @@ from api.v1.models import (
     UserSession,
     Ticket,
 )
+from api.v1.models.data_source import DataSource, DataSourceColumn, SavedQuery
 
 # this is the Alembic Config object
 config = context.config
