@@ -1,6 +1,7 @@
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import or_
 from api.v1.config.database import get_sync_db_pg, get_ch_client
 from api.v1.dependencies.auth_dependency import get_current_active_user
 from api.v1.models.user import User
@@ -36,7 +37,12 @@ def list_available_datasources(
 ):
     query = db.query(DataSource).options(joinedload(DataSource.columns_def)).filter(DataSource.is_active == True)
     if current_user.institution_id:
-        query = query.filter(DataSource.institution_id == current_user.institution_id)
+        query = query.filter(
+            or_(
+                DataSource.institution_id == current_user.institution_id,
+                DataSource.institution_id.is_(None),
+            )
+        )
     sources = query.order_by(DataSource.name).all()
     return [
         {
