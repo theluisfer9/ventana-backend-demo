@@ -44,7 +44,7 @@ def create_admin_user():
 
         # Create admin user
         admin_user = User(
-            email="admin@pantalla-magica.gob.gt",
+            email="admin@ventanamagica.org",
             username="admin",
             password_hash=hash_password("Admin123!"),  # Change this password!
             first_name="Administrador",
@@ -61,7 +61,7 @@ def create_admin_user():
         print("=" * 50)
         print("Admin user created successfully!")
         print("=" * 50)
-        print(f"Email: admin@pantalla-magica.gob.gt")
+        print(f"Email: admin@ventanamagica.org")
         print(f"Username: admin")
         print(f"Password: Admin123!")
         print("=" * 50)
