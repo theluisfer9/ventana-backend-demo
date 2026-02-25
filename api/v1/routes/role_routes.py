@@ -3,7 +3,6 @@ from sqlalchemy.orm import Session
 from uuid import UUID
 from typing import List
 
-from pydantic import BaseModel
 from api.v1.config.database import get_sync_db_pg
 from api.v1.models.data_source import DataSource, RoleDataSource
 from api.v1.models.role import Role
@@ -12,6 +11,8 @@ from api.v1.schemas.role import (
     RoleUpdate,
     RoleOut,
     RolePermissionsUpdate,
+    RoleDataSourcesUpdate,
+    RoleDataSourceOut,
 )
 from api.v1.schemas.permission import PermissionOut
 from api.v1.services.role import (
@@ -174,19 +175,6 @@ def update_role_perms(
     return updated_role
 
 
-# ── Role-DataSource assignment schemas ──
-
-class RoleDataSourcesUpdate(BaseModel):
-    datasource_ids: list[str]
-
-
-class RoleDataSourceOut(BaseModel):
-    id: str
-    code: str
-    name: str
-    description: str | None = None
-
-
 # ── Role-DataSource assignment endpoints ──
 
 @router.get("/{role_id}/datasources", response_model=list[RoleDataSourceOut])
@@ -203,13 +191,13 @@ def get_role_datasources(
     assigned = (
         db.query(DataSource)
         .join(RoleDataSource, RoleDataSource.datasource_id == DataSource.id)
-        .filter(RoleDataSource.role_id == role_id, DataSource.is_active == True)
+        .filter(RoleDataSource.role_id == role_id, DataSource.is_active.is_(True))
         .all()
     )
-    return [RoleDataSourceOut(id=str(ds.id), code=ds.code, name=ds.name, description=ds.description) for ds in assigned]
+    return assigned
 
 
-@router.put("/{role_id}/datasources")
+@router.put("/{role_id}/datasources", response_model=list[RoleDataSourceOut])
 def update_role_datasources(
     role_id: UUID,
     body: RoleDataSourcesUpdate,
@@ -221,12 +209,37 @@ def update_role_datasources(
     if not role:
         raise HTTPException(status_code=404, detail="Rol no encontrado")
 
+    unique_ids = set(body.datasource_ids)
+
+    # Validate all datasource IDs exist and are active
+    if unique_ids:
+        valid_ds = (
+            db.query(DataSource)
+            .filter(DataSource.id.in_(unique_ids), DataSource.is_active.is_(True))
+            .all()
+        )
+        valid_ids = {ds.id for ds in valid_ds}
+        invalid = unique_ids - valid_ids
+        if invalid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Datasources no válidos o inactivos: {[str(i) for i in invalid]}",
+            )
+
     # Delete existing assignments
     db.query(RoleDataSource).filter(RoleDataSource.role_id == role_id).delete()
 
     # Create new assignments
-    for ds_id in body.datasource_ids:
-        db.add(RoleDataSource(role_id=role_id, datasource_id=UUID(ds_id)))
+    for ds_id in unique_ids:
+        db.add(RoleDataSource(role_id=role_id, datasource_id=ds_id))
 
     db.commit()
-    return {"message": "Datasources actualizados"}
+
+    # Return updated list
+    assigned = (
+        db.query(DataSource)
+        .join(RoleDataSource, RoleDataSource.datasource_id == DataSource.id)
+        .filter(RoleDataSource.role_id == role_id, DataSource.is_active.is_(True))
+        .all()
+    )
+    return assigned

@@ -43,3 +43,17 @@ class RoleMinimal(BaseModel):
 class RolePermissionsUpdate(BaseModel):
     """Schema for updating role permissions"""
     permission_ids: List[UUID]
+
+
+class RoleDataSourcesUpdate(BaseModel):
+    """Schema for updating role datasource assignments"""
+    datasource_ids: List[UUID]
+
+
+class RoleDataSourceOut(BaseModel):
+    id: UUID
+    code: str
+    name: str
+    description: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
