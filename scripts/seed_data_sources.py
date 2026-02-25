@@ -15,11 +15,12 @@ from api.v1.models.data_source import (
 from api.v1.config.institutional_presets import INSTITUTIONAL_PRESETS
 
 GEO_COLUMNS = {
-    "hogar_id", "ig3_departamento", "ig3_departamento_codigo",
-    "ig4_municipio", "ig4_municipio_codigo", "ig5_lugar_poblado", "area",
+    "hogar_id", "ig3_departamento", "ig3_codigo_departamento",
+    "ig4_municipio", "ig4_codigo_municipio", "ig6_lugar_poblado", "ig8_area",
 }
 MEASURE_COLUMNS = {
-    "numero_personas", "hombres", "mujeres", "ipm_gt",
+    "personas", "hombres", "mujeres", "ipm_gt", "pmt", "nbi",
+    "total_intervenciones",
 }
 
 def classify_column(col_name: str, intervention_columns: list[str]) -> tuple[ColumnDataType, ColumnCategory]:
@@ -58,7 +59,11 @@ def seed():
             db.add(ds)
             db.flush()
 
-            all_cols = list(dict.fromkeys(preset["columns"] + preset["intervention_columns"]))
+            all_cols = list(dict.fromkeys(
+                preset["columns"]
+                + preset.get("detail_columns", [])
+                + preset["intervention_columns"]
+            ))
             intervention_cols = preset["intervention_columns"]
             labels = preset["labels"]
 
