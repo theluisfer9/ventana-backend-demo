@@ -82,10 +82,11 @@ def execute_query(
 
     params["_offset"] = offset
     params["_limit"] = limit
+    order_col = columns[0].column_name
     data_sql = (
         f"SELECT {select_clause} FROM {ds.ch_table} "
         f"WHERE {where_clause} "
-        f"ORDER BY hogar_id "
+        f"ORDER BY {order_col} "
         f"LIMIT {{_limit:Int32}} OFFSET {{_offset:Int32}}"
     )
     data_result = client.query(data_sql, parameters=params)

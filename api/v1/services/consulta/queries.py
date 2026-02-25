@@ -1,4 +1,4 @@
-"""Queries a ClickHouse para consulta institucional (beneficios_x_hogar)."""
+"""Queries a ClickHouse para consulta institucional (vw_beneficios_x_hogar)."""
 
 
 def build_consulta_filters(
@@ -14,11 +14,11 @@ def build_consulta_filters(
     params = {}
 
     if departamento := kwargs.get("departamento_codigo"):
-        conditions.append("trim(ig3_departamento_codigo) = {depto:String}")
+        conditions.append("trim(ig3_codigo_departamento) = {depto:String}")
         params["depto"] = str(departamento).strip()
 
     if municipio := kwargs.get("municipio_codigo"):
-        conditions.append("trim(ig4_municipio_codigo) = {muni:String}")
+        conditions.append("trim(ig4_codigo_municipio) = {muni:String}")
         params["muni"] = str(municipio).strip()
 
     if buscar := kwargs.get("buscar"):
@@ -39,12 +39,12 @@ def _build_select_columns(intervention_columns: list[str]) -> str:
     base = [
         "hogar_id",
         "ig3_departamento",
-        "trim(ig3_departamento_codigo) as ig3_departamento_codigo",
+        "trim(ig3_codigo_departamento) as ig3_codigo_departamento",
         "ig4_municipio",
-        "trim(ig4_municipio_codigo) as ig4_municipio_codigo",
-        "ig5_lugar_poblado",
-        "area",
-        "numero_personas",
+        "trim(ig4_codigo_municipio) as ig4_codigo_municipio",
+        "ig6_lugar_poblado",
+        "ig8_area",
+        "personas",
         "hombres",
         "mujeres",
         "ipm_gt",
@@ -68,7 +68,7 @@ def query_consulta_lista(
 
     count_query = f"""
         SELECT count() as total
-        FROM rsh.beneficios_x_hogar
+        FROM rsh.vw_beneficios_x_hogar
         WHERE {where_clause}
     """
     count_result = client.query(count_query, parameters=params)
@@ -82,9 +82,9 @@ def query_consulta_lista(
     data_query = f"""
         SELECT
             {select_cols}
-        FROM rsh.beneficios_x_hogar
+        FROM rsh.vw_beneficios_x_hogar
         WHERE {where_clause}
-        ORDER BY ig3_departamento_codigo, ig4_municipio_codigo, hogar_id
+        ORDER BY ig3_codigo_departamento, ig4_codigo_municipio, hogar_id
         LIMIT {{limit:Int32}}
         OFFSET {{offset:Int32}}
     """
@@ -109,7 +109,7 @@ def query_consulta_detalle(
     query = f"""
         SELECT
             {select_cols}
-        FROM rsh.beneficios_x_hogar
+        FROM rsh.vw_beneficios_x_hogar
         WHERE {base_filter} AND hogar_id = {{hogar_id:Int64}}
         LIMIT 1
     """
@@ -126,10 +126,10 @@ def query_consulta_dashboard(
     global_query = f"""
         SELECT
             count() as total_hogares,
-            uniq(ig3_departamento_codigo) as total_departamentos,
-            uniq(ig4_municipio_codigo) as total_municipios,
-            sum(numero_personas) as total_personas
-        FROM rsh.beneficios_x_hogar
+            uniq(ig3_codigo_departamento) as total_departamentos,
+            uniq(ig4_codigo_municipio) as total_municipios,
+            sum(personas) as total_personas
+        FROM rsh.vw_beneficios_x_hogar
         WHERE {base_filter}
     """
     global_result = client.query(global_query, parameters={})
@@ -139,11 +139,11 @@ def query_consulta_dashboard(
     depto_query = f"""
         SELECT
             ig3_departamento as departamento,
-            trim(ig3_departamento_codigo) as departamento_codigo,
+            trim(ig3_codigo_departamento) as departamento_codigo,
             count() as cantidad_hogares
-        FROM rsh.beneficios_x_hogar
+        FROM rsh.vw_beneficios_x_hogar
         WHERE {base_filter}
-        GROUP BY ig3_departamento, ig3_departamento_codigo
+        GROUP BY ig3_departamento, ig3_codigo_departamento
         ORDER BY cantidad_hogares DESC
         LIMIT 22
     """
@@ -160,7 +160,7 @@ def query_consulta_dashboard(
     interv_query = f"""
         SELECT
             {sumif_parts}
-        FROM rsh.beneficios_x_hogar
+        FROM rsh.vw_beneficios_x_hogar
         WHERE {base_filter}
     """
     interv_result = client.query(interv_query, parameters={})
@@ -179,10 +179,10 @@ def query_consulta_catalogos(client, base_filter: str) -> dict:
 
     depto_query = f"""
         SELECT DISTINCT
-            trim(ig3_departamento_codigo) as codigo,
+            trim(ig3_codigo_departamento) as codigo,
             ig3_departamento as nombre
-        FROM rsh.beneficios_x_hogar
-        WHERE {base_filter} AND ig3_departamento_codigo != ''
+        FROM rsh.vw_beneficios_x_hogar
+        WHERE {base_filter} AND ig3_codigo_departamento != ''
         ORDER BY codigo
     """
     depto_result = client.query(depto_query, parameters={})

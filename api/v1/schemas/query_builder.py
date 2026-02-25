@@ -44,23 +44,34 @@ class QueryExecuteResponse(BaseModel):
 class SavedQueryCreate(BaseModel):
     datasource_id: UUID
     name: str
+    description: Optional[str] = None
     selected_columns: list[str]
     filters: list[QueryFilter] = []
+    institution_id: Optional[UUID] = None
+    is_shared: bool = False
 
 
 class SavedQueryUpdate(BaseModel):
     name: Optional[str] = None
+    description: Optional[str] = None
     selected_columns: Optional[list[str]] = None
     filters: Optional[list[QueryFilter]] = None
+    institution_id: Optional[UUID] = None
+    is_shared: Optional[bool] = None
 
 
 class SavedQueryOut(BaseModel):
     id: UUID
     name: str
+    description: Optional[str] = None
     datasource_id: UUID
     datasource_name: str = ""
     selected_columns: list[str]
     filters: list[dict]
+    institution_id: Optional[UUID] = None
+    institution_name: Optional[str] = None
+    is_shared: bool = False
+    created_by: Optional[str] = None
     created_at: str = ""
 
     class Config:
@@ -70,7 +81,11 @@ class SavedQueryOut(BaseModel):
 class SavedQueryListItem(BaseModel):
     id: UUID
     name: str
+    description: Optional[str] = None
     datasource_name: str = ""
     column_count: int = 0
     filter_count: int = 0
+    institution_name: Optional[str] = None
+    is_shared: bool = False
+    created_by: Optional[str] = None
     created_at: str = ""

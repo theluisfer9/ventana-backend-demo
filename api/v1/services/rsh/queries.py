@@ -131,20 +131,20 @@ def build_filters(**kwargs) -> tuple[str, dict, set[str]]:
     # Filtros que requieren subquery en entrevista_personas
     if kwargs.get("con_analfabetismo"):
         conditions.append(
-            "EXISTS (SELECT 1 FROM rsh.entrevista_personas AS ep "
+            "EXISTS (SELECT 1 FROM rsh.w_personas_fecs_v2 AS ep "
             "WHERE ep.hogar_id = p.hogar_id AND lower(ep.pe1_descripcion) = 'no')"
         )
 
     if kwargs.get("con_menores_sin_escuela"):
         conditions.append(
-            "EXISTS (SELECT 1 FROM rsh.entrevista_personas AS ep "
+            "EXISTS (SELECT 1 FROM rsh.w_personas_fecs_v2 AS ep "
             "WHERE ep.hogar_id = p.hogar_id AND ep.pd8_anios_cumplidos < 18 "
             "AND ep.pd8_anios_cumplidos >= 5 AND lower(ep.pe2_descripcion) = 'no')"
         )
 
     if kwargs.get("sin_empleo"):
         conditions.append(
-            "NOT EXISTS (SELECT 1 FROM rsh.entrevista_personas AS ep "
+            "NOT EXISTS (SELECT 1 FROM rsh.w_personas_fecs_v2 AS ep "
             "WHERE ep.hogar_id = p.hogar_id AND lower(ep.ie1_descripcion) LIKE '%trabaj%')"
         )
 
@@ -172,19 +172,19 @@ def _build_joins(joins_needed: set[str]) -> str:
 
     if "demograficos" in joins_needed:
         join_clauses.append("""
-            LEFT JOIN rsh.hogares_datos_demograficos AS d
+            LEFT JOIN rsh.vw_hogares_datos_demograficos AS d
             ON p.hogar_id = d.hogar_id AND p.anio = d.anio_captura
         """)
 
     if "inseguridad" in joins_needed:
         join_clauses.append("""
-            LEFT JOIN rsh.hogares_inseguridad_alimentaria AS i
+            LEFT JOIN rsh.vw_elcsa_hogar AS i
             ON p.hogar_id = i.hogar_id
         """)
 
     if "hogares" in joins_needed:
         join_clauses.append("""
-            LEFT JOIN rsh.entrevista_hogares AS h
+            LEFT JOIN rsh.vw_hogar_fecs_v2 AS h
             ON p.hogar_id = h.hogar_id
         """)
 
@@ -206,7 +206,7 @@ def query_beneficiarios_lista(
     # Query de conteo
     count_query = f"""
         SELECT count() as total
-        FROM rsh.pobreza_hogar AS p
+        FROM rsh.vw_pobreza_hogars AS p
         {joins}
         WHERE {where_clause}
     """
@@ -242,7 +242,7 @@ def query_beneficiarios_lista(
             p.nombre_jefe_hogar,
             trim(p.sexo_jefe_hogar) as sexo_jefe_hogar,
             p.anio
-        FROM rsh.pobreza_hogar AS p
+        FROM rsh.vw_pobreza_hogars AS p
         {joins}
         WHERE {where_clause}
         ORDER BY p.departamento_codigo, p.municipio_codigo, p.hogar_id
@@ -325,10 +325,10 @@ def query_beneficiario_detalle(client, hogar_id: int) -> dict | None:
             i.puntos_elcsa,
             i.cantidad_personas,
             i.cantidad_nino
-        FROM rsh.pobreza_hogar AS p
-        LEFT JOIN rsh.hogares_datos_demograficos AS d
+        FROM rsh.vw_pobreza_hogars AS p
+        LEFT JOIN rsh.vw_hogares_datos_demograficos AS d
             ON p.hogar_id = d.hogar_id AND p.anio = d.anio_captura
-        LEFT JOIN rsh.hogares_inseguridad_alimentaria AS i
+        LEFT JOIN rsh.vw_elcsa_hogar AS i
             ON p.hogar_id = i.hogar_id
         WHERE p.hogar_id = {hogar_id:Int64}
         LIMIT 1
@@ -362,7 +362,7 @@ def query_stats(client, **filter_kwargs) -> dict:
             sum(p.numero_personas) as total_personas,
             sum(p.hombres) as total_hombres,
             sum(p.mujeres) as total_mujeres
-        FROM rsh.pobreza_hogar AS p
+        FROM rsh.vw_pobreza_hogars AS p
         {joins}
         WHERE {where_clause}
     """
@@ -377,7 +377,7 @@ def query_stats(client, **filter_kwargs) -> dict:
             trim(p.departamento_codigo) as departamento_codigo,
             count() as cantidad_hogares,
             sum(p.numero_personas) as total_personas
-        FROM rsh.pobreza_hogar AS p
+        FROM rsh.vw_pobreza_hogars AS p
         {joins}
         WHERE {where_clause}
         GROUP BY p.departamento, p.departamento_codigo
@@ -397,7 +397,7 @@ def query_stats(client, **filter_kwargs) -> dict:
             p.ipm_gt_clasificacion,
             count() as cantidad_hogares,
             round(avg(p.ipm_gt), 4) as ipm_promedio
-        FROM rsh.pobreza_hogar AS p
+        FROM rsh.vw_pobreza_hogars AS p
         {joins}
         WHERE {where_clause}
         GROUP BY p.ipm_gt_clasificacion
@@ -432,7 +432,7 @@ def query_dashboard(client) -> dict:
             uniq(municipio_codigo) as total_municipios,
             round(avg(ipm_gt), 4) as ipm_promedio,
             sum(numero_personas) as total_personas
-        FROM rsh.pobreza_hogar
+        FROM rsh.vw_pobreza_hogars
     """
 
     global_result = client.query(global_query)
@@ -446,7 +446,7 @@ def query_dashboard(client) -> dict:
             count() as cantidad_hogares,
             sum(numero_personas) as total_personas,
             round(avg(ipm_gt), 4) as ipm_promedio
-        FROM rsh.pobreza_hogar
+        FROM rsh.vw_pobreza_hogars
         GROUP BY departamento, departamento_codigo
         ORDER BY cantidad_hogares DESC
         LIMIT 10
@@ -463,7 +463,7 @@ def query_dashboard(client) -> dict:
         SELECT
             i.nivel_inseguridad_alimentaria,
             count() as cantidad_hogares
-        FROM rsh.hogares_inseguridad_alimentaria AS i
+        FROM rsh.vw_elcsa_hogar AS i
         WHERE i.nivel_inseguridad_alimentaria != ''
         GROUP BY i.nivel_inseguridad_alimentaria
         ORDER BY cantidad_hogares DESC
@@ -496,7 +496,7 @@ def query_catalogos(client) -> dict:
         SELECT DISTINCT
             trim(departamento_codigo) as codigo,
             departamento as nombre
-        FROM rsh.pobreza_hogar
+        FROM rsh.vw_pobreza_hogars
         WHERE departamento_codigo != ''
         ORDER BY codigo
     """
@@ -509,7 +509,7 @@ def query_catalogos(client) -> dict:
     # Clasificaciones IPM
     ipm_query = """
         SELECT DISTINCT ipm_gt_clasificacion
-        FROM rsh.pobreza_hogar
+        FROM rsh.vw_pobreza_hogars
         WHERE ipm_gt_clasificacion != ''
         ORDER BY ipm_gt_clasificacion
     """
@@ -519,7 +519,7 @@ def query_catalogos(client) -> dict:
     # Clasificaciones PMT
     pmt_query = """
         SELECT DISTINCT pmt_clasificacion
-        FROM rsh.pobreza_hogar
+        FROM rsh.vw_pobreza_hogars
         WHERE pmt_clasificacion != ''
         ORDER BY pmt_clasificacion
     """
@@ -529,7 +529,7 @@ def query_catalogos(client) -> dict:
     # Clasificaciones NBI
     nbi_query = """
         SELECT DISTINCT nbi_clasificacion
-        FROM rsh.pobreza_hogar
+        FROM rsh.vw_pobreza_hogars
         WHERE nbi_clasificacion != ''
         ORDER BY nbi_clasificacion
     """
@@ -539,7 +539,7 @@ def query_catalogos(client) -> dict:
     # Áreas
     area_query = """
         SELECT DISTINCT area
-        FROM rsh.pobreza_hogar
+        FROM rsh.vw_pobreza_hogars
         WHERE area != ''
         ORDER BY area
     """
@@ -549,7 +549,7 @@ def query_catalogos(client) -> dict:
     # Niveles inseguridad alimentaria
     inseg_query = """
         SELECT DISTINCT nivel_inseguridad_alimentaria
-        FROM rsh.hogares_inseguridad_alimentaria
+        FROM rsh.vw_elcsa_hogar
         WHERE nivel_inseguridad_alimentaria != ''
         ORDER BY nivel_inseguridad_alimentaria
     """
@@ -559,7 +559,7 @@ def query_catalogos(client) -> dict:
     # Fases
     fase_query = """
         SELECT DISTINCT fase
-        FROM rsh.pobreza_hogar
+        FROM rsh.vw_pobreza_hogars
         WHERE fase != ''
         ORDER BY fase
     """
@@ -569,7 +569,7 @@ def query_catalogos(client) -> dict:
     # Comunidades lingüísticas
     comunidad_query = """
         SELECT DISTINCT comunidad_linguistica
-        FROM rsh.hogares_datos_demograficos
+        FROM rsh.vw_hogares_datos_demograficos
         WHERE comunidad_linguistica != ''
         ORDER BY comunidad_linguistica
     """
@@ -579,7 +579,7 @@ def query_catalogos(client) -> dict:
     # Pueblos de pertenencia
     pueblo_query = """
         SELECT DISTINCT pueblo_de_pertenencia
-        FROM rsh.hogares_datos_demograficos
+        FROM rsh.vw_hogares_datos_demograficos
         WHERE pueblo_de_pertenencia != ''
         ORDER BY pueblo_de_pertenencia
     """
@@ -589,7 +589,7 @@ def query_catalogos(client) -> dict:
     # Fuentes de agua
     agua_query = """
         SELECT DISTINCT ch10_descripcion
-        FROM rsh.entrevista_hogares
+        FROM rsh.vw_hogar_fecs_v2
         WHERE ch10_descripcion != ''
         ORDER BY ch10_descripcion
     """
@@ -599,7 +599,7 @@ def query_catalogos(client) -> dict:
     # Tipos sanitario
     sanitario_query = """
         SELECT DISTINCT ch13_descripcion
-        FROM rsh.entrevista_hogares
+        FROM rsh.vw_hogar_fecs_v2
         WHERE ch13_descripcion != ''
         ORDER BY ch13_descripcion
     """
@@ -609,7 +609,7 @@ def query_catalogos(client) -> dict:
     # Tipos alumbrado
     alumbrado_query = """
         SELECT DISTINCT ch16_descripcion
-        FROM rsh.entrevista_hogares
+        FROM rsh.vw_hogar_fecs_v2
         WHERE ch16_descripcion != ''
         ORDER BY ch16_descripcion
     """
@@ -619,7 +619,7 @@ def query_catalogos(client) -> dict:
     # Combustibles cocina
     combustible_query = """
         SELECT DISTINCT ch06_descripcion
-        FROM rsh.entrevista_hogares
+        FROM rsh.vw_hogar_fecs_v2
         WHERE ch06_descripcion != ''
         ORDER BY ch06_descripcion
     """
@@ -643,7 +643,7 @@ def query_municipios(client, departamento_codigo: str) -> list[dict]:
         SELECT DISTINCT
             trim(municipio_codigo) as codigo,
             municipio as nombre
-        FROM rsh.pobreza_hogar
+        FROM rsh.vw_pobreza_hogars
         WHERE trim(departamento_codigo) = {depto:String}
           AND municipio_codigo != ''
         ORDER BY codigo
@@ -671,7 +671,7 @@ def query_lugares_poblados(client, municipio_codigo: str) -> list[dict]:
         SELECT DISTINCT
             trim(lugarpoblado_codigo) as codigo,
             lugar_poblado as nombre
-        FROM rsh.pobreza_hogar
+        FROM rsh.vw_pobreza_hogars
         WHERE trim(municipio_codigo) = {muni:String}
           AND lugarpoblado_codigo != ''
         ORDER BY codigo
@@ -720,7 +720,7 @@ def query_personas_hogar(client, hogar_id: int) -> list[dict]:
             pe7_descripcion,
             ie1_descripcion,
             ie3_descripcion
-        FROM rsh.entrevista_personas
+        FROM rsh.w_personas_fecs_v2
         WHERE hogar_id = {hogar_id:Int64}
         ORDER BY pd1_numero_correlativo_persona_hogar
     """
@@ -788,10 +788,10 @@ def query_vivienda_hogar(client, hogar_id: int) -> dict | None:
             h.sn7_nino_sintio_hambre,
             h.sn8_adulto_comio_un_tiempo,
             h.sn8_menor18_comio_un_tiempo
-        FROM rsh.pobreza_hogar AS p
-        LEFT JOIN rsh.entrevistas_viviendas AS v
-            ON p.vivienda_id = v.id
-        LEFT JOIN rsh.entrevista_hogares AS h
+        FROM rsh.vw_pobreza_hogars AS p
+        LEFT JOIN rsh.vw_vivienda_carac AS v
+            ON p.vivienda_id = v.no_ficha
+        LEFT JOIN rsh.vw_hogar_fecs_v2 AS h
             ON p.hogar_id = h.hogar_id
         WHERE p.hogar_id = {hogar_id:Int64}
         LIMIT 1

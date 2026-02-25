@@ -1,4 +1,4 @@
-"""Mapea filas ClickHouse de beneficios_x_hogar a diccionarios."""
+"""Mapea filas ClickHouse de vw_beneficios_x_hogar a diccionarios."""
 from decimal import Decimal
 
 
@@ -23,16 +23,16 @@ def _safe_int(val) -> int:
 
 
 def row_to_beneficio_resumen(row: dict, intervention_columns: list[str]) -> dict:
-    """Convierte fila de beneficios_x_hogar a formato resumen."""
+    """Convierte fila de vw_beneficios_x_hogar a formato resumen."""
     result = {
         "hogar_id": row["hogar_id"],
         "departamento": _safe_str(row.get("ig3_departamento")),
-        "departamento_codigo": _safe_str(row.get("ig3_departamento_codigo")),
+        "departamento_codigo": _safe_str(row.get("ig3_codigo_departamento")),
         "municipio": _safe_str(row.get("ig4_municipio")),
-        "municipio_codigo": _safe_str(row.get("ig4_municipio_codigo")),
-        "lugar_poblado": _safe_str(row.get("ig5_lugar_poblado")),
-        "area": _safe_str(row.get("area")),
-        "numero_personas": _safe_int(row.get("numero_personas")),
+        "municipio_codigo": _safe_str(row.get("ig4_codigo_municipio")),
+        "lugar_poblado": _safe_str(row.get("ig6_lugar_poblado")),
+        "area": _safe_str(row.get("ig8_area")),
+        "numero_personas": _safe_int(row.get("personas")),
         "hombres": _safe_int(row.get("hombres")),
         "mujeres": _safe_int(row.get("mujeres")),
         "ipm_gt": _safe_float(row.get("ipm_gt")),

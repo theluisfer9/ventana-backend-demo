@@ -27,6 +27,7 @@ class DataSource(BasePG):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     code = Column(String(50), unique=True, nullable=False, index=True)
     name = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
     ch_table = Column(String(200), nullable=False)
     base_filter = Column(Text, nullable=True)
     institution_id = Column(
@@ -62,6 +63,7 @@ class DataSourceColumn(BasePG):
     )
     column_name = Column(String(100), nullable=False)
     label = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
     data_type = Column(SAEnum(ColumnDataType), nullable=False, default=ColumnDataType.TEXT)
     category = Column(SAEnum(ColumnCategory), nullable=False, default=ColumnCategory.DIMENSION)
     is_selectable = Column(Boolean, default=True)
@@ -90,13 +92,21 @@ class SavedQuery(BasePG):
         nullable=False,
     )
     name = Column(String(200), nullable=False)
+    description = Column(Text, nullable=True)
     selected_columns = Column(JSONB, nullable=False, default=list)
     filters = Column(JSONB, nullable=False, default=list)
+    institution_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("institutions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    is_shared = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     user = relationship("User", backref="saved_queries")
     data_source = relationship("DataSource", back_populates="saved_queries")
+    institution = relationship("Institution", backref="shared_queries")
 
     def __repr__(self):
         return f"<SavedQuery {self.name}>"

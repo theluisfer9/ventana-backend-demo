@@ -6,6 +6,7 @@ from uuid import UUID
 class DataSourceColumnCreate(BaseModel):
     column_name: str
     label: str
+    description: Optional[str] = None
     data_type: str = "TEXT"
     category: str = "DIMENSION"
     is_selectable: bool = True
@@ -15,6 +16,7 @@ class DataSourceColumnCreate(BaseModel):
 
 class DataSourceColumnUpdate(BaseModel):
     label: Optional[str] = None
+    description: Optional[str] = None
     data_type: Optional[str] = None
     category: Optional[str] = None
     is_selectable: Optional[bool] = None
@@ -26,6 +28,7 @@ class DataSourceColumnOut(BaseModel):
     id: UUID
     column_name: str
     label: str
+    description: Optional[str] = None
     data_type: str
     category: str
     is_selectable: bool
@@ -39,6 +42,7 @@ class DataSourceColumnOut(BaseModel):
 class DataSourceCreate(BaseModel):
     code: str
     name: str
+    description: Optional[str] = None
     ch_table: str
     base_filter: Optional[str] = None
     institution_id: Optional[UUID] = None
@@ -46,6 +50,7 @@ class DataSourceCreate(BaseModel):
 
 class DataSourceUpdate(BaseModel):
     name: Optional[str] = None
+    description: Optional[str] = None
     ch_table: Optional[str] = None
     base_filter: Optional[str] = None
     institution_id: Optional[UUID] = None
@@ -56,6 +61,7 @@ class DataSourceOut(BaseModel):
     id: UUID
     code: str
     name: str
+    description: Optional[str] = None
     ch_table: str
     base_filter: Optional[str] = None
     institution_id: Optional[UUID] = None
@@ -70,6 +76,7 @@ class DataSourceListItem(BaseModel):
     id: UUID
     code: str
     name: str
+    description: Optional[str] = None
     is_active: bool
     column_count: int = 0
 

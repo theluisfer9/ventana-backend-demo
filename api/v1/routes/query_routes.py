@@ -8,12 +8,17 @@ from api.v1.models.user import User
 from api.v1.models.data_source import DataSource, SavedQuery
 from api.v1.schemas.query_builder import (
     QueryExecuteRequest, QueryExecuteResponse, ColumnMeta,
-    SavedQueryCreate, SavedQueryOut, SavedQueryListItem,
+    SavedQueryCreate, SavedQueryUpdate, SavedQueryOut, SavedQueryListItem,
 )
 from api.v1.services.query_engine.validators import validate_columns, validate_filters
 from api.v1.services.query_engine.engine import execute_query
+from api.v1.auth.permissions import RoleCode
 
 router = APIRouter(prefix="/queries", tags=["Query Builder"])
+
+
+def _is_admin(user: User) -> bool:
+    return user.role and user.role.code == RoleCode.ADMIN
 
 
 def _get_user_datasource(ds_id: UUID, user: User, db: Session) -> DataSource:
@@ -28,6 +33,17 @@ def _get_user_datasource(ds_id: UUID, user: User, db: Session) -> DataSource:
     if user.institution_id and ds.institution_id and ds.institution_id != user.institution_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tiene acceso a este DataSource")
     return ds
+
+
+def _can_access_saved_query(sq: SavedQuery, user: User) -> bool:
+    """Check if user can access a saved query."""
+    if _is_admin(user):
+        return True
+    if sq.user_id == user.id:
+        return True
+    if sq.is_shared and sq.institution_id and user.institution_id == sq.institution_id:
+        return True
+    return False
 
 
 @router.get("/datasources")
@@ -49,10 +65,12 @@ def list_available_datasources(
             "id": str(ds.id),
             "code": ds.code,
             "name": ds.name,
+            "description": ds.description,
             "columns": [
                 {
                     "column_name": c.column_name,
                     "label": c.label,
+                    "description": c.description,
                     "data_type": c.data_type.value,
                     "category": c.category.value,
                     "is_selectable": c.is_selectable,
@@ -100,17 +118,32 @@ def save_query(
     filters_dicts = [f.model_dump() for f in body.filters]
     validate_filters(filters_dicts, ds.columns_def)
 
+    # Only admins can share queries to institutions
+    institution_id = None
+    is_shared = False
+    if body.is_shared and body.institution_id:
+        if not _is_admin(current_user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Solo administradores pueden compartir consultas a instituciones",
+            )
+        institution_id = body.institution_id
+        is_shared = True
+
     sq = SavedQuery(
         user_id=current_user.id,
         datasource_id=ds.id,
         name=body.name,
+        description=body.description,
         selected_columns=body.selected_columns,
         filters=filters_dicts,
+        institution_id=institution_id,
+        is_shared=is_shared,
     )
     db.add(sq)
     db.commit()
     db.refresh(sq)
-    return {"id": str(sq.id), "name": sq.name}
+    return {"id": str(sq.id), "name": sq.name, "is_shared": sq.is_shared}
 
 
 @router.get("/saved")
@@ -118,20 +151,52 @@ def list_saved_queries(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_sync_db_pg),
 ):
-    queries = (
+    """
+    List saved queries visible to the current user:
+    - Admin: ALL saved queries
+    - Institutional user: own queries + shared queries for their institution
+    - Other users: only their own queries
+    """
+    base_query = (
         db.query(SavedQuery)
-        .options(joinedload(SavedQuery.data_source))
-        .filter(SavedQuery.user_id == current_user.id)
-        .order_by(SavedQuery.created_at.desc())
-        .all()
+        .options(
+            joinedload(SavedQuery.data_source),
+            joinedload(SavedQuery.user),
+            joinedload(SavedQuery.institution),
+        )
     )
+
+    if _is_admin(current_user):
+        queries = base_query.order_by(SavedQuery.created_at.desc()).all()
+    elif current_user.institution_id:
+        queries = (
+            base_query.filter(
+                or_(
+                    SavedQuery.user_id == current_user.id,
+                    (SavedQuery.is_shared == True) & (SavedQuery.institution_id == current_user.institution_id),
+                )
+            )
+            .order_by(SavedQuery.created_at.desc())
+            .all()
+        )
+    else:
+        queries = (
+            base_query.filter(SavedQuery.user_id == current_user.id)
+            .order_by(SavedQuery.created_at.desc())
+            .all()
+        )
+
     return [
         SavedQueryListItem(
             id=sq.id,
             name=sq.name,
+            description=sq.description,
             datasource_name=sq.data_source.name if sq.data_source else "",
             column_count=len(sq.selected_columns) if sq.selected_columns else 0,
             filter_count=len(sq.filters) if sq.filters else 0,
+            institution_name=sq.institution.name if sq.institution else None,
+            is_shared=sq.is_shared or False,
+            created_by=sq.user.full_name if sq.user else None,
             created_at=sq.created_at.isoformat() if sq.created_at else "",
         )
         for sq in queries
@@ -146,19 +211,96 @@ def get_saved_query(
 ):
     sq = (
         db.query(SavedQuery)
-        .options(joinedload(SavedQuery.data_source))
-        .filter(SavedQuery.id == query_id, SavedQuery.user_id == current_user.id)
+        .options(
+            joinedload(SavedQuery.data_source),
+            joinedload(SavedQuery.user),
+            joinedload(SavedQuery.institution),
+        )
+        .filter(SavedQuery.id == query_id)
         .first()
     )
-    if not sq:
+    if not sq or not _can_access_saved_query(sq, current_user):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Consulta no encontrada")
     return SavedQueryOut(
         id=sq.id,
         name=sq.name,
+        description=sq.description,
         datasource_id=sq.datasource_id,
         datasource_name=sq.data_source.name if sq.data_source else "",
         selected_columns=sq.selected_columns or [],
         filters=sq.filters or [],
+        institution_id=sq.institution_id,
+        institution_name=sq.institution.name if sq.institution else None,
+        is_shared=sq.is_shared or False,
+        created_by=sq.user.full_name if sq.user else None,
+        created_at=sq.created_at.isoformat() if sq.created_at else "",
+    )
+
+
+@router.put("/saved/{query_id}")
+def update_saved_query(
+    query_id: UUID,
+    body: SavedQueryUpdate,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_sync_db_pg),
+):
+    """Actualizar una consulta guardada. Solo el creador o admin pueden editar."""
+    sq = (
+        db.query(SavedQuery)
+        .options(
+            joinedload(SavedQuery.data_source),
+            joinedload(SavedQuery.user),
+            joinedload(SavedQuery.institution),
+        )
+        .filter(SavedQuery.id == query_id)
+        .first()
+    )
+    if not sq:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Consulta no encontrada")
+    if sq.user_id != current_user.id and not _is_admin(current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tiene permiso para editar esta consulta")
+
+    # Validar columnas y filtros si se actualizan
+    if body.selected_columns is not None or body.filters is not None:
+        ds = _get_user_datasource(sq.datasource_id, current_user, db)
+        if body.selected_columns is not None:
+            validate_columns(body.selected_columns, ds.columns_def)
+        if body.filters is not None:
+            filters_dicts = [f.model_dump() for f in body.filters]
+            validate_filters(filters_dicts, ds.columns_def)
+
+    # Aplicar cambios
+    update_data = body.model_dump(exclude_unset=True)
+
+    if "filters" in update_data:
+        update_data["filters"] = [f.model_dump() for f in body.filters]
+
+    # Solo admin puede compartir
+    if "is_shared" in update_data or "institution_id" in update_data:
+        if not _is_admin(current_user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Solo administradores pueden compartir consultas a instituciones",
+            )
+
+    for key, value in update_data.items():
+        setattr(sq, key, value)
+
+    db.commit()
+    db.refresh(sq)
+
+    return SavedQueryOut(
+        id=sq.id,
+        name=sq.name,
+        description=sq.description,
+        datasource_id=sq.datasource_id,
+        datasource_name=sq.data_source.name if sq.data_source else "",
+        selected_columns=sq.selected_columns or [],
+        filters=sq.filters or [],
+        institution_id=sq.institution_id,
+        institution_name=sq.institution.name if sq.institution else None,
+        is_shared=sq.is_shared or False,
+        created_by=sq.user.full_name if sq.user else None,
         created_at=sq.created_at.isoformat() if sq.created_at else "",
     )
 
@@ -169,11 +311,12 @@ def delete_saved_query(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_sync_db_pg),
 ):
-    sq = db.query(SavedQuery).filter(
-        SavedQuery.id == query_id, SavedQuery.user_id == current_user.id
-    ).first()
+    sq = db.query(SavedQuery).filter(SavedQuery.id == query_id).first()
     if not sq:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Consulta no encontrada")
+    # Only the creator or admin can delete
+    if sq.user_id != current_user.id and not _is_admin(current_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tiene permiso para eliminar esta consulta")
     db.delete(sq)
     db.commit()
 
@@ -188,10 +331,10 @@ def execute_saved_query(
     sq = (
         db.query(SavedQuery)
         .options(joinedload(SavedQuery.data_source))
-        .filter(SavedQuery.id == query_id, SavedQuery.user_id == current_user.id)
+        .filter(SavedQuery.id == query_id)
         .first()
     )
-    if not sq:
+    if not sq or not _can_access_saved_query(sq, current_user):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Consulta no encontrada")
 
     ds = _get_user_datasource(sq.datasource_id, current_user, db)
