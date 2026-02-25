@@ -44,3 +44,26 @@ def validate_filters(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Columna no filtrable: {f['column']}",
             )
+
+
+def validate_group_by(
+    requested: list[str],
+    available: list[DataSourceColumn],
+) -> list[DataSourceColumn]:
+    """Validate requested group-by columns exist and are groupable."""
+    col_map = {c.column_name: c for c in available}
+    validated = []
+    for col_name in requested:
+        col = col_map.get(col_name)
+        if not col:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Columna de agrupación no disponible: {col_name}",
+            )
+        if not col.is_groupable:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Columna no agrupable: {col_name}",
+            )
+        validated.append(col)
+    return validated

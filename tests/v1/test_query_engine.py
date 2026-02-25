@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import MagicMock
 from fastapi import HTTPException
 
-from api.v1.services.query_engine.validators import validate_columns, validate_filters
+from api.v1.services.query_engine.validators import validate_columns, validate_filters, validate_group_by
 from api.v1.services.query_engine.engine import build_select, build_select_grouped, build_group_by, build_where, execute_query
 from api.v1.models.data_source import ColumnDataType, ColumnCategory
 
@@ -325,3 +325,33 @@ class TestExecuteQueryGroupBy:
         data_sql = ch.query.call_args_list[1][0][0]
         assert "GROUP BY departamento" in data_sql
         assert "COUNT(*)" in data_sql
+
+
+# ==================== validate_group_by ====================
+
+class TestValidateGroupBy:
+    def test_valid_groupable_columns(self):
+        cols = [
+            _make_col("departamento", is_groupable=True),
+            _make_col("municipio", is_groupable=True),
+            _make_col("monto", category=ColumnCategory.MEASURE, is_groupable=False),
+        ]
+        result = validate_group_by(["departamento"], cols)
+        assert len(result) == 1
+        assert result[0].column_name == "departamento"
+
+    def test_non_groupable_column_raises(self):
+        cols = [_make_col("monto", category=ColumnCategory.MEASURE, is_groupable=False)]
+        with pytest.raises(HTTPException) as exc_info:
+            validate_group_by(["monto"], cols)
+        assert exc_info.value.status_code == 400
+
+    def test_unknown_column_raises(self):
+        cols = [_make_col("departamento", is_groupable=True)]
+        with pytest.raises(HTTPException) as exc_info:
+            validate_group_by(["no_existe"], cols)
+        assert exc_info.value.status_code == 400
+
+    def test_empty_list_returns_empty(self):
+        result = validate_group_by([], [_make_col("departamento", is_groupable=True)])
+        assert result == []
