@@ -4,7 +4,7 @@ _CH_TYPE_MAP = {
     "TEXT": "String",
     "INTEGER": "Int64",
     "FLOAT": "Float64",
-    "BOOLEAN": "Int32",
+    "BOOLEAN": "Int8",
 }
 
 _OP_MAP = {
