@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 from fastapi import HTTPException
 
 from api.v1.services.query_engine.validators import validate_columns, validate_filters
-from api.v1.services.query_engine.engine import build_select, build_where, execute_query
+from api.v1.services.query_engine.engine import build_select, build_select_grouped, build_group_by, build_where, execute_query
 from api.v1.models.data_source import ColumnDataType, ColumnCategory
 
 
@@ -15,7 +15,7 @@ from api.v1.models.data_source import ColumnDataType, ColumnCategory
 
 def _make_col(name, label=None, data_type=ColumnDataType.TEXT,
               category=ColumnCategory.DIMENSION,
-              is_selectable=True, is_filterable=True):
+              is_selectable=True, is_filterable=True, is_groupable=False):
     col = MagicMock()
     col.column_name = name
     col.label = label or name.replace("_", " ").title()
@@ -23,6 +23,7 @@ def _make_col(name, label=None, data_type=ColumnDataType.TEXT,
     col.category = category
     col.is_selectable = is_selectable
     col.is_filterable = is_filterable
+    col.is_groupable = is_groupable
     col.display_order = 0
     return col
 
@@ -244,3 +245,83 @@ class TestExecuteQuery:
 
         count_sql = ch.query.call_args_list[0][0][0]
         assert "departamento =" in count_sql
+
+
+# ==================== build_select_grouped ====================
+
+class TestBuildSelectGrouped:
+    def test_count_star_only(self):
+        group_cols = [_make_col("departamento")]
+        aggs = [{"column": "*", "function": "COUNT"}]
+        result = build_select_grouped(group_cols, aggs)
+        assert result == "departamento, COUNT(*) AS count"
+
+    def test_sum_column(self):
+        group_cols = [_make_col("departamento")]
+        aggs = [
+            {"column": "*", "function": "COUNT"},
+            {"column": "monto", "function": "SUM"},
+        ]
+        result = build_select_grouped(group_cols, aggs)
+        assert result == "departamento, COUNT(*) AS count, SUM(monto) AS sum_monto"
+
+    def test_multiple_group_cols(self):
+        group_cols = [_make_col("departamento"), _make_col("municipio")]
+        aggs = [{"column": "*", "function": "COUNT"}]
+        result = build_select_grouped(group_cols, aggs)
+        assert result == "departamento, municipio, COUNT(*) AS count"
+
+
+# ==================== build_group_by ====================
+
+class TestBuildGroupBy:
+    def test_single_column(self):
+        assert build_group_by(["departamento"]) == "departamento"
+
+    def test_multiple_columns(self):
+        assert build_group_by(["departamento", "municipio"]) == "departamento, municipio"
+
+
+# ==================== execute_query with GROUP BY ====================
+
+class TestExecuteQueryGroupBy:
+    def _make_ds(self, base_filter=None):
+        ds = MagicMock()
+        ds.ch_table = "rsh.beneficios_x_hogar"
+        ds.base_filter = base_filter
+        ds.columns_def = SAMPLE_COLUMNS
+        return ds
+
+    def _make_ch_client(self, count=42, rows=None, col_names=None):
+        client = MagicMock()
+        count_result = MagicMock()
+        count_result.result_rows = [[count]]
+        data_result = MagicMock()
+        data_result.column_names = col_names or ["hogar_id", "departamento"]
+        data_result.result_rows = rows or [[1, "Guatemala"], [2, "Escuintla"]]
+        client.query = MagicMock(side_effect=[count_result, data_result])
+        return client
+
+    def test_execute_with_group_by(self):
+        ds = self._make_ds()
+        ch = self._make_ch_client(
+            count=3,
+            rows=[["Guatemala", 100], ["Escuintla", 50], ["Quetzaltenango", 30]],
+            col_names=["departamento", "count"],
+        )
+        cols = [_make_col("departamento")]
+
+        rows, total = execute_query(
+            ch, ds, cols, [], 0, 10,
+            group_by=["departamento"],
+            aggregations=[{"column": "*", "function": "COUNT"}],
+        )
+
+        assert total == 3
+        assert len(rows) == 3
+        # Verify GROUP BY in SQL
+        count_sql = ch.query.call_args_list[0][0][0]
+        assert "GROUP BY" in count_sql
+        data_sql = ch.query.call_args_list[1][0][0]
+        assert "GROUP BY departamento" in data_sql
+        assert "COUNT(*)" in data_sql

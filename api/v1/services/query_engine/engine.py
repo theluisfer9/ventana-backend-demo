@@ -17,9 +17,34 @@ _OP_MAP = {
     "like": "ILIKE",
 }
 
+_AGG_ALIAS = {
+    "COUNT": "count",
+    "SUM": "sum",
+}
+
 
 def build_select(columns: list[DataSourceColumn]) -> str:
     return ", ".join(c.column_name for c in columns)
+
+
+def build_select_grouped(
+    group_columns: list[DataSourceColumn],
+    aggregations: list[dict],
+) -> str:
+    parts = [c.column_name for c in group_columns]
+    for agg in aggregations:
+        func = agg["function"].upper()
+        col = agg["column"]
+        if col == "*":
+            parts.append(f"{func}(*) AS {_AGG_ALIAS.get(func, func.lower())}")
+        else:
+            alias = f"{_AGG_ALIAS.get(func, func.lower())}_{col}"
+            parts.append(f"{func}({col}) AS {alias}")
+    return ", ".join(parts)
+
+
+def build_group_by(group_column_names: list[str]) -> str:
+    return ", ".join(group_column_names)
 
 
 def build_where(
@@ -71,24 +96,55 @@ def execute_query(
     filters: list[dict],
     offset: int,
     limit: int,
+    group_by: list[str] | None = None,
+    aggregations: list[dict] | None = None,
 ) -> tuple[list[dict], int]:
     col_map = {c.column_name: c for c in ds.columns_def}
-    select_clause = build_select(columns)
     where_clause, params = build_where(ds.base_filter, filters, col_map)
 
-    count_sql = f"SELECT count() FROM {ds.ch_table} WHERE {where_clause}"
-    count_result = client.query(count_sql, parameters=params)
-    total = count_result.result_rows[0][0]
+    if group_by and aggregations:
+        # Grouped query
+        group_cols = [col_map[name] for name in group_by if name in col_map]
+        select_clause = build_select_grouped(group_cols, aggregations)
+        group_clause = build_group_by(group_by)
 
-    params["_offset"] = offset
-    params["_limit"] = limit
-    order_col = columns[0].column_name
-    data_sql = (
-        f"SELECT {select_clause} FROM {ds.ch_table} "
-        f"WHERE {where_clause} "
-        f"ORDER BY {order_col} "
-        f"LIMIT {{_limit:Int32}} OFFSET {{_offset:Int32}}"
-    )
+        count_sql = (
+            f"SELECT count() FROM ("
+            f"SELECT {group_clause} FROM {ds.ch_table} "
+            f"WHERE {where_clause} GROUP BY {group_clause}"
+            f") AS sub"
+        )
+        count_result = client.query(count_sql, parameters=params)
+        total = count_result.result_rows[0][0]
+
+        params["_offset"] = offset
+        params["_limit"] = limit
+        order_col = group_by[0]
+        data_sql = (
+            f"SELECT {select_clause} FROM {ds.ch_table} "
+            f"WHERE {where_clause} "
+            f"GROUP BY {group_clause} "
+            f"ORDER BY {order_col} "
+            f"LIMIT {{_limit:Int32}} OFFSET {{_offset:Int32}}"
+        )
+    else:
+        # Non-grouped query (existing behavior)
+        select_clause = build_select(columns)
+
+        count_sql = f"SELECT count() FROM {ds.ch_table} WHERE {where_clause}"
+        count_result = client.query(count_sql, parameters=params)
+        total = count_result.result_rows[0][0]
+
+        params["_offset"] = offset
+        params["_limit"] = limit
+        order_col = columns[0].column_name
+        data_sql = (
+            f"SELECT {select_clause} FROM {ds.ch_table} "
+            f"WHERE {where_clause} "
+            f"ORDER BY {order_col} "
+            f"LIMIT {{_limit:Int32}} OFFSET {{_offset:Int32}}"
+        )
+
     data_result = client.query(data_sql, parameters=params)
     rows = [
         dict(zip(data_result.column_names, row))
