@@ -14,8 +14,9 @@ from sqlalchemy.orm import Session, sessionmaker
 from api.v1.config.database import pg_sync_engine
 from api.v1.models.data_source import (
     DataSource, DataSourceColumn, ColumnDataType, ColumnCategory,
-    SavedQuery,
+    SavedQuery, RoleDataSource,
 )
+from api.v1.models.role import Role
 
 load_dotenv()
 
@@ -568,6 +569,8 @@ def seed():
                     label = make_label(col_name)
                     description = None
 
+                is_groupable = category in (ColumnCategory.DIMENSION, ColumnCategory.GEO)
+
                 dsc = DataSourceColumn(
                     datasource_id=ds.id,
                     column_name=col_name,
@@ -577,6 +580,7 @@ def seed():
                     category=category,
                     is_selectable=True,
                     is_filterable=True,
+                    is_groupable=is_groupable,
                     display_order=order,
                 )
                 db.add(dsc)
@@ -585,6 +589,19 @@ def seed():
             print(f"  Seeded: {meta['code']} ({meta['name']}) - {col_total} columns")
 
         db.commit()
+
+        # Assign all datasources to admin role
+        admin_role = db.query(Role).filter(Role.code == "ADMIN").first()
+        if admin_role:
+            db.query(RoleDataSource).filter(RoleDataSource.role_id == admin_role.id).delete()
+            all_datasources = db.query(DataSource).filter(DataSource.is_active == True).all()
+            for ds in all_datasources:
+                db.add(RoleDataSource(role_id=admin_role.id, datasource_id=ds.id))
+            db.commit()
+            print(f"Assigned {len(all_datasources)} datasources to admin role")
+        else:
+            print("WARNING: Admin role not found, skipping role_datasources seeding")
+
         print("\nDone!")
 
     except Exception as e:
