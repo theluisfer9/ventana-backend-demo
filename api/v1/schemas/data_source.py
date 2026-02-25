@@ -33,6 +33,7 @@ class DataSourceColumnOut(BaseModel):
     category: str
     is_selectable: bool
     is_filterable: bool
+    is_groupable: bool = False
     display_order: int
 
     class Config:
