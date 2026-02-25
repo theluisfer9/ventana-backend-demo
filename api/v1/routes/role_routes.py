@@ -3,7 +3,10 @@ from sqlalchemy.orm import Session
 from uuid import UUID
 from typing import List
 
+from pydantic import BaseModel
 from api.v1.config.database import get_sync_db_pg
+from api.v1.models.data_source import DataSource, RoleDataSource
+from api.v1.models.role import Role
 from api.v1.schemas.role import (
     RoleCreate,
     RoleUpdate,
@@ -169,3 +172,61 @@ def update_role_perms(
 
     updated_role = update_role_permissions(db, role, permissions_data.permission_ids)
     return updated_role
+
+
+# ── Role-DataSource assignment schemas ──
+
+class RoleDataSourcesUpdate(BaseModel):
+    datasource_ids: list[str]
+
+
+class RoleDataSourceOut(BaseModel):
+    id: str
+    code: str
+    name: str
+    description: str | None = None
+
+
+# ── Role-DataSource assignment endpoints ──
+
+@router.get("/{role_id}/datasources", response_model=list[RoleDataSourceOut])
+def get_role_datasources(
+    role_id: UUID,
+    db: Session = Depends(get_sync_db_pg),
+    current_user: User = Depends(RequirePermission(PermissionCode.ROLES_MANAGE)),
+):
+    """List datasources assigned to a role."""
+    role = get_role_by_id(db, role_id)
+    if not role:
+        raise HTTPException(status_code=404, detail="Rol no encontrado")
+
+    assigned = (
+        db.query(DataSource)
+        .join(RoleDataSource, RoleDataSource.datasource_id == DataSource.id)
+        .filter(RoleDataSource.role_id == role_id, DataSource.is_active == True)
+        .all()
+    )
+    return [RoleDataSourceOut(id=str(ds.id), code=ds.code, name=ds.name, description=ds.description) for ds in assigned]
+
+
+@router.put("/{role_id}/datasources")
+def update_role_datasources(
+    role_id: UUID,
+    body: RoleDataSourcesUpdate,
+    db: Session = Depends(get_sync_db_pg),
+    current_user: User = Depends(RequirePermission(PermissionCode.ROLES_MANAGE)),
+):
+    """Replace datasources assigned to a role."""
+    role = get_role_by_id(db, role_id)
+    if not role:
+        raise HTTPException(status_code=404, detail="Rol no encontrado")
+
+    # Delete existing assignments
+    db.query(RoleDataSource).filter(RoleDataSource.role_id == role_id).delete()
+
+    # Create new assignments
+    for ds_id in body.datasource_ids:
+        db.add(RoleDataSource(role_id=role_id, datasource_id=UUID(ds_id)))
+
+    db.commit()
+    return {"message": "Datasources actualizados"}
