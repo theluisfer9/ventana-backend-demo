@@ -332,3 +332,50 @@ class TestExecuteGroupBy:
             "limit": 10,
         })
         assert resp.status_code == 400
+
+    def test_group_by_without_aggregations_returns_400(self, authenticated_admin_client, db_session, test_institution):
+        ds = _seed_datasource(db_session, institution_id=test_institution.id)
+        for col in ds.columns_def:
+            if col.column_name == "departamento":
+                col.is_groupable = True
+        db_session.commit()
+        resp = authenticated_admin_client.post("/api/v1/queries/execute", json={
+            "datasource_id": str(ds.id),
+            "columns": ["departamento"],
+            "filters": [],
+            "group_by": ["departamento"],
+            "aggregations": [],
+            "offset": 0,
+            "limit": 10,
+        })
+        assert resp.status_code == 400
+
+    def test_aggregations_without_group_by_returns_400(self, authenticated_admin_client, db_session, test_institution):
+        ds = _seed_datasource(db_session, institution_id=test_institution.id)
+        resp = authenticated_admin_client.post("/api/v1/queries/execute", json={
+            "datasource_id": str(ds.id),
+            "columns": ["departamento"],
+            "filters": [],
+            "group_by": [],
+            "aggregations": [{"column": "*", "function": "COUNT"}],
+            "offset": 0,
+            "limit": 10,
+        })
+        assert resp.status_code == 400
+
+    def test_invalid_aggregation_column_returns_400(self, authenticated_admin_client, db_session, test_institution):
+        ds = _seed_datasource(db_session, institution_id=test_institution.id)
+        for col in ds.columns_def:
+            if col.column_name == "departamento":
+                col.is_groupable = True
+        db_session.commit()
+        resp = authenticated_admin_client.post("/api/v1/queries/execute", json={
+            "datasource_id": str(ds.id),
+            "columns": ["departamento"],
+            "filters": [],
+            "group_by": ["departamento"],
+            "aggregations": [{"column": "*", "function": "COUNT"}, {"column": "no_existe", "function": "SUM"}],
+            "offset": 0,
+            "limit": 10,
+        })
+        assert resp.status_code == 400

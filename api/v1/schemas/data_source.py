@@ -11,6 +11,7 @@ class DataSourceColumnCreate(BaseModel):
     category: str = "DIMENSION"
     is_selectable: bool = True
     is_filterable: bool = True
+    is_groupable: bool = False
     display_order: int = 0
 
 
@@ -21,6 +22,7 @@ class DataSourceColumnUpdate(BaseModel):
     category: Optional[str] = None
     is_selectable: Optional[bool] = None
     is_filterable: Optional[bool] = None
+    is_groupable: Optional[bool] = None
     display_order: Optional[int] = None
 
 

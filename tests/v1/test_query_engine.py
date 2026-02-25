@@ -6,7 +6,7 @@ import pytest
 from unittest.mock import MagicMock
 from fastapi import HTTPException
 
-from api.v1.services.query_engine.validators import validate_columns, validate_filters, validate_group_by
+from api.v1.services.query_engine.validators import validate_columns, validate_filters, validate_group_by, validate_aggregations
 from api.v1.services.query_engine.engine import build_select, build_select_grouped, build_group_by, build_where, execute_query
 from api.v1.models.data_source import ColumnDataType, ColumnCategory
 
@@ -355,3 +355,30 @@ class TestValidateGroupBy:
     def test_empty_list_returns_empty(self):
         result = validate_group_by([], [_make_col("departamento", is_groupable=True)])
         assert result == []
+
+
+# ==================== validate_aggregations ====================
+
+class TestValidateAggregations:
+    def test_count_star_passes(self):
+        cols = [_make_col("departamento")]
+        validate_aggregations([{"column": "*", "function": "COUNT"}], cols)
+
+    def test_valid_column_passes(self):
+        cols = [_make_col("monto", category=ColumnCategory.MEASURE)]
+        validate_aggregations([{"column": "monto", "function": "SUM"}], cols)
+
+    def test_unknown_column_raises(self):
+        cols = [_make_col("departamento")]
+        with pytest.raises(HTTPException) as exc_info:
+            validate_aggregations([{"column": "no_existe", "function": "SUM"}], cols)
+        assert exc_info.value.status_code == 400
+
+    def test_sql_injection_attempt_raises(self):
+        cols = [_make_col("departamento")]
+        with pytest.raises(HTTPException) as exc_info:
+            validate_aggregations([{"column": "1); DROP TABLE x; --", "function": "COUNT"}], cols)
+        assert exc_info.value.status_code == 400
+
+    def test_empty_list_passes(self):
+        validate_aggregations([], [_make_col("departamento")])

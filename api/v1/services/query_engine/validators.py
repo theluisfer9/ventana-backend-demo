@@ -46,6 +46,21 @@ def validate_filters(
             )
 
 
+def validate_aggregations(
+    aggregations: list[dict],
+    available: list[DataSourceColumn],
+) -> None:
+    """Validate aggregation column names exist in the datasource."""
+    col_map = {c.column_name: c for c in available}
+    for agg in aggregations:
+        col = agg.get("column", "")
+        if col != "*" and col not in col_map:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Columna de agregación no disponible: {col}",
+            )
+
+
 def validate_group_by(
     requested: list[str],
     available: list[DataSourceColumn],

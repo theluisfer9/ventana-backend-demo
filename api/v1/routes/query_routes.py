@@ -10,11 +10,41 @@ from api.v1.schemas.query_builder import (
     QueryExecuteRequest, QueryExecuteResponse, ColumnMeta,
     SavedQueryCreate, SavedQueryUpdate, SavedQueryOut, SavedQueryListItem,
 )
-from api.v1.services.query_engine.validators import validate_columns, validate_filters, validate_group_by
+from api.v1.services.query_engine.validators import validate_columns, validate_filters, validate_group_by, validate_aggregations
 from api.v1.services.query_engine.engine import execute_query
 from api.v1.auth.permissions import RoleCode
 
 router = APIRouter(prefix="/queries", tags=["Query Builder"])
+
+
+def _build_columns_meta(
+    group_by: list[str] | None,
+    aggregations: list[dict] | None,
+    columns_def: list,
+    validated_cols: list,
+) -> list[ColumnMeta]:
+    """Build columns_meta for response, handling both grouped and non-grouped queries."""
+    if group_by and aggregations:
+        col_map = {c.column_name: c for c in columns_def}
+        meta = []
+        for name in group_by:
+            c = col_map[name]
+            meta.append(ColumnMeta(column_name=c.column_name, label=c.label, data_type=c.data_type.value))
+        for agg in aggregations:
+            func = agg["function"].upper()
+            col = agg["column"]
+            if col == "*":
+                meta.append(ColumnMeta(column_name="count", label="Conteo", data_type="INTEGER"))
+            else:
+                alias = f"{func.lower()}_{col}"
+                orig = col_map.get(col)
+                label = f"{func}({orig.label if orig else col})"
+                meta.append(ColumnMeta(column_name=alias, label=label, data_type="FLOAT" if func == "SUM" else "INTEGER"))
+        return meta
+    return [
+        ColumnMeta(column_name=c.column_name, label=c.label, data_type=c.data_type.value)
+        for c in validated_cols
+    ]
 
 
 def _is_admin(user: User) -> bool:
@@ -99,11 +129,18 @@ def execute_adhoc_query(
     filters_dicts = [f.model_dump() for f in body.filters]
     validate_filters(filters_dicts, ds.columns_def)
 
-    # Validate GROUP BY
+    # Validate GROUP BY + aggregations (must be both or neither)
     group_by_names = body.group_by or []
     agg_dicts = [a.model_dump() for a in body.aggregations] if body.aggregations else []
+    if bool(group_by_names) != bool(agg_dicts):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="group_by y aggregations deben proporcionarse juntos",
+        )
     if group_by_names:
         validate_group_by(group_by_names, ds.columns_def)
+    if agg_dicts:
+        validate_aggregations(agg_dicts, ds.columns_def)
 
     rows, total = execute_query(
         client, ds, validated_cols, filters_dicts, body.offset, body.limit,
@@ -111,28 +148,7 @@ def execute_adhoc_query(
         aggregations=agg_dicts or None,
     )
 
-    # Build columns_meta — include aggregation columns when grouped
-    if group_by_names and agg_dicts:
-        col_map = {c.column_name: c for c in ds.columns_def}
-        columns_meta = []
-        for name in group_by_names:
-            c = col_map[name]
-            columns_meta.append(ColumnMeta(column_name=c.column_name, label=c.label, data_type=c.data_type.value))
-        for agg in agg_dicts:
-            func = agg["function"].upper()
-            col = agg["column"]
-            if col == "*":
-                columns_meta.append(ColumnMeta(column_name="count", label="Conteo", data_type="INTEGER"))
-            else:
-                alias = f"{func.lower()}_{col}"
-                orig = col_map.get(col)
-                label = f"{func}({orig.label if orig else col})"
-                columns_meta.append(ColumnMeta(column_name=alias, label=label, data_type="FLOAT" if func == "SUM" else "INTEGER"))
-    else:
-        columns_meta = [
-            ColumnMeta(column_name=c.column_name, label=c.label, data_type=c.data_type.value)
-            for c in validated_cols
-        ]
+    columns_meta = _build_columns_meta(group_by_names or None, agg_dicts or None, ds.columns_def, validated_cols)
 
     return QueryExecuteResponse(
         items=rows, total=total, offset=body.offset, limit=body.limit, columns_meta=columns_meta,
@@ -390,28 +406,7 @@ def execute_saved_query(
         aggregations=sq.aggregations or None,
     )
 
-    # Build columns_meta with aggregation support
-    if sq.group_by and sq.aggregations:
-        col_map = {c.column_name: c for c in ds.columns_def}
-        columns_meta = []
-        for name in sq.group_by:
-            c = col_map[name]
-            columns_meta.append(ColumnMeta(column_name=c.column_name, label=c.label, data_type=c.data_type.value))
-        for agg in sq.aggregations:
-            func = agg["function"].upper()
-            col = agg["column"]
-            if col == "*":
-                columns_meta.append(ColumnMeta(column_name="count", label="Conteo", data_type="INTEGER"))
-            else:
-                alias = f"{func.lower()}_{col}"
-                orig = col_map.get(col)
-                label = f"{func}({orig.label if orig else col})"
-                columns_meta.append(ColumnMeta(column_name=alias, label=label, data_type="FLOAT" if func == "SUM" else "INTEGER"))
-    else:
-        columns_meta = [
-            ColumnMeta(column_name=c.column_name, label=c.label, data_type=c.data_type.value)
-            for c in validated_cols
-        ]
+    columns_meta = _build_columns_meta(sq.group_by or None, sq.aggregations or None, ds.columns_def, validated_cols)
 
     return QueryExecuteResponse(
         items=rows, total=total, offset=0, limit=20, columns_meta=columns_meta,
