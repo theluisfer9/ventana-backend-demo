@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Integer, Text, Enum as SAEnum
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Integer, Text, Enum as SAEnum, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -68,6 +68,7 @@ class DataSourceColumn(BasePG):
     category = Column(SAEnum(ColumnCategory), nullable=False, default=ColumnCategory.DIMENSION)
     is_selectable = Column(Boolean, default=True)
     is_filterable = Column(Boolean, default=True)
+    is_groupable = Column(Boolean, default=False)
     display_order = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -95,6 +96,8 @@ class SavedQuery(BasePG):
     description = Column(Text, nullable=True)
     selected_columns = Column(JSONB, nullable=False, default=list)
     filters = Column(JSONB, nullable=False, default=list)
+    group_by = Column(JSONB, nullable=False, default=list)
+    aggregations = Column(JSONB, nullable=False, default=list)
     institution_id = Column(
         UUID(as_uuid=True),
         ForeignKey("institutions.id", ondelete="SET NULL"),
@@ -110,3 +113,13 @@ class SavedQuery(BasePG):
 
     def __repr__(self):
         return f"<SavedQuery {self.name}>"
+
+
+class RoleDataSource(BasePG):
+    __tablename__ = "role_datasources"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    role_id = Column(UUID(as_uuid=True), ForeignKey("roles.id", ondelete="CASCADE"), nullable=False)
+    datasource_id = Column(UUID(as_uuid=True), ForeignKey("data_sources.id", ondelete="CASCADE"), nullable=False)
+
+    __table_args__ = (UniqueConstraint("role_id", "datasource_id"),)
