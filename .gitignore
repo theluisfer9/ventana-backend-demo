@@ -26,3 +26,4 @@ archive.zip
 .*.sw?
 .cache
 .env
+.worktrees/
