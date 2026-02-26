@@ -32,6 +32,8 @@ def list_datasources(
             id=ds.id,
             code=ds.code,
             name=ds.name,
+            ch_table=ds.ch_table,
+            base_filter_columns=ds.base_filter_columns or [],
             is_active=ds.is_active,
             column_count=len(ds.columns_def) if ds.columns_def else 0,
         )
@@ -163,7 +165,8 @@ def _datasource_to_out(ds: DataSource) -> DataSourceOut:
         code=ds.code,
         name=ds.name,
         ch_table=ds.ch_table,
-        base_filter=ds.base_filter,
+        base_filter_columns=ds.base_filter_columns or [],
+        base_filter_logic=ds.base_filter_logic or "OR",
         institution_id=ds.institution_id,
         is_active=ds.is_active,
         columns=[_column_to_out(c) for c in (ds.columns_def or [])],
