@@ -29,7 +29,9 @@ class DataSource(BasePG):
     name = Column(String(200), nullable=False)
     description = Column(Text, nullable=True)
     ch_table = Column(String(200), nullable=False)
-    base_filter = Column(Text, nullable=True)
+    base_filter = Column(Text, nullable=True)  # DEPRECATED — kept for migration
+    base_filter_columns = Column(JSONB, nullable=False, default=list, server_default="[]")
+    base_filter_logic = Column(String(3), nullable=False, default="OR", server_default="OR")
     institution_id = Column(
         UUID(as_uuid=True),
         ForeignKey("institutions.id", ondelete="SET NULL"),
