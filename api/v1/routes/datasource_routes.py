@@ -1,7 +1,8 @@
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query as QueryParam
 from sqlalchemy.orm import Session, joinedload
-from api.v1.config.database import get_sync_db_pg
+from api.v1.config.database import get_sync_db_pg, get_ch_client
+from api.v1.services.query_engine.engine import _safe_identifier
 from api.v1.dependencies.permission_dependency import RequirePermission
 from api.v1.auth.permissions import PermissionCode
 from api.v1.models.user import User
@@ -55,6 +56,36 @@ def create_datasource(
     db.commit()
     db.refresh(ds)
     return _datasource_to_out(ds)
+
+
+@router.get("/ch-tables", response_model=list[str])
+def list_ch_tables(
+    current_user: User = Depends(RequirePermission(PermissionCode.DATASOURCES_MANAGE)),
+    ch_client=Depends(get_ch_client),
+):
+    """List available ClickHouse tables for auto-discovery."""
+    result = ch_client.query("SHOW TABLES FROM rsh")
+    tables = [f"rsh.{row[0]}" for row in result.result_rows]
+    return tables
+
+
+@router.get("/ch-columns")
+def list_ch_columns(
+    table: str = QueryParam(..., description="Fully qualified table name, e.g. rsh.vw_beneficios_x_hogar"),
+    current_user: User = Depends(RequirePermission(PermissionCode.DATASOURCES_MANAGE)),
+    ch_client=Depends(get_ch_client),
+):
+    """List columns of a ClickHouse table."""
+    try:
+        safe_table = _safe_identifier(table)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Nombre de tabla no válido: {table!r}")
+    result = ch_client.query(f"DESCRIBE TABLE {safe_table}")
+    columns = [
+        {"name": row[0], "type": row[1]}
+        for row in result.result_rows
+    ]
+    return columns
 
 
 @router.get("/{ds_id}", response_model=DataSourceOut)
