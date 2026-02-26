@@ -43,6 +43,8 @@ def build_where_from_columns(columns: list[str], logic: str) -> str | None:
     """
     if not columns:
         return None
+    if logic.upper() not in ("AND", "OR"):
+        raise ValueError(f"Operador lógico no válido: {logic!r}")
     parts = [f"{_safe_identifier(col)} = 1" for col in columns]
     if len(parts) == 1:
         return parts[0]

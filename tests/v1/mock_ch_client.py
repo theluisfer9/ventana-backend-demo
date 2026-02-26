@@ -90,11 +90,11 @@ class MockClickHouseClient:
             return self._handle_detalle(params)
 
         # ── Personas de un hogar ──
-        if "entrevista_personas" in sql_clean and "hogar_id" in params:
+        if ("entrevista_personas" in sql_clean or "w_personas_fecs_v2" in sql_clean) and "hogar_id" in params:
             return self._handle_personas(params)
 
         # ── Vivienda de un hogar ──
-        if "entrevistas_viviendas" in sql_clean and "hogar_id" in params:
+        if ("entrevistas_viviendas" in sql_clean or "vw_vivienda_carac" in sql_clean) and "hogar_id" in params:
             return self._handle_vivienda(params)
 
         # ── Stats: distribucion IPM (GROUP BY ipm_gt_clasificacion) ──

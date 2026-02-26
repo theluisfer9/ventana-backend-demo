@@ -164,7 +164,7 @@ class TestRoleServicePermissions:
 
     def test_get_all_permissions(self, db_session, test_permissions):
         perms = get_all_permissions(db_session)
-        assert len(perms) == 5
+        assert len(perms) == 7
         # Ordered by module, code
         modules = [p.module for p in perms]
         assert modules == sorted(modules)
@@ -263,7 +263,7 @@ class TestRoleRoutes:
         json_data = response.json()
         data = json_data.get("data", json_data)
         assert isinstance(data, list)
-        assert len(data) == 5
+        assert len(data) == 7
 
     def test_update_role_permissions(self, authenticated_admin_client, test_roles, test_permissions):
         role_id = str(test_roles["analyst"].id)

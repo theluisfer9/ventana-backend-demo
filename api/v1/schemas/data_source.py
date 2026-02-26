@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID
 
 
@@ -48,7 +48,7 @@ class DataSourceCreate(BaseModel):
     description: Optional[str] = None
     ch_table: str
     base_filter_columns: list[str] = []
-    base_filter_logic: str = "OR"
+    base_filter_logic: Literal["AND", "OR"] = "OR"
     institution_id: Optional[UUID] = None
 
 
@@ -57,7 +57,7 @@ class DataSourceUpdate(BaseModel):
     description: Optional[str] = None
     ch_table: Optional[str] = None
     base_filter_columns: Optional[list[str]] = None
-    base_filter_logic: Optional[str] = None
+    base_filter_logic: Optional[Literal["AND", "OR"]] = None
     institution_id: Optional[UUID] = None
     is_active: Optional[bool] = None
 

@@ -1,6 +1,6 @@
 """Queries a ClickHouse para consulta institucional (vw_beneficios_x_hogar)."""
 
-from api.v1.services.query_engine.engine import build_where_from_columns
+from api.v1.services.query_engine.engine import build_where_from_columns, _safe_identifier
 
 
 def build_consulta_filters(
@@ -37,7 +37,7 @@ def build_consulta_filters(
     # Filtros de intervenciones (booleanos -> columna = 1)
     for col in intervention_columns:
         if kwargs.get(col):
-            conditions.append(f"{col} = 1")
+            conditions.append(f"{_safe_identifier(col)} = 1")
 
     where_clause = " AND ".join(conditions)
     return where_clause, params
@@ -59,7 +59,7 @@ def _build_select_columns(intervention_columns: list[str]) -> str:
         "ipm_gt",
         "ipm_gt_clasificacion",
     ]
-    return ",\n            ".join(base + intervention_columns)
+    return ",\n            ".join(base + [_safe_identifier(c) for c in intervention_columns])
 
 
 def query_consulta_lista(
@@ -172,7 +172,7 @@ def query_consulta_dashboard(
 
     # Conteo por intervencion (dinamico)
     sumif_parts = ", ".join(
-        f"sumIf(1, {col} = 1) as {col}" for col in intervention_columns
+        f"sumIf(1, {_safe_identifier(col)} = 1) as {_safe_identifier(col)}" for col in intervention_columns
     )
     interv_query = f"""
         SELECT

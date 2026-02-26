@@ -27,7 +27,7 @@ def list_datasources(
     current_user: User = Depends(RequirePermission(PermissionCode.DATASOURCES_MANAGE)),
     db: Session = Depends(get_sync_db_pg),
 ):
-    sources = db.query(DataSource).order_by(DataSource.code).all()
+    sources = db.query(DataSource).options(joinedload(DataSource.columns_def)).order_by(DataSource.code).all()
     return [
         DataSourceListItem(
             id=ds.id,
@@ -140,6 +140,7 @@ def create_column(
         category=ColumnCategory(body.category),
         is_selectable=body.is_selectable,
         is_filterable=body.is_filterable,
+        is_groupable=body.is_groupable,
         display_order=body.display_order,
     )
     db.add(col)
@@ -209,9 +210,11 @@ def _column_to_out(col: DataSourceColumn) -> DataSourceColumnOut:
         id=col.id,
         column_name=col.column_name,
         label=col.label,
+        description=col.description,
         data_type=col.data_type.value if col.data_type else "TEXT",
         category=col.category.value if col.category else "DIMENSION",
         is_selectable=col.is_selectable,
         is_filterable=col.is_filterable,
+        is_groupable=col.is_groupable,
         display_order=col.display_order,
     )

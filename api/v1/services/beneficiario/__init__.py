@@ -53,56 +53,26 @@ def _enrich(b: dict) -> dict:
 def _apply_filters(data: list, filters: BeneficiarioFilters) -> list:
     result = data
 
-    if filters.departamento_code:
-        result = [b for b in result if b["departamento_code"] == filters.departamento_code]
+    if filters.departamento_codigo:
+        result = [b for b in result if b["departamento_code"] == filters.departamento_codigo]
 
-    if filters.municipio_code:
-        result = [b for b in result if b["municipio_code"] == filters.municipio_code]
+    if filters.municipio_codigo:
+        result = [b for b in result if b["municipio_code"] == filters.municipio_codigo]
 
-    if filters.genero:
-        result = [b for b in result if b["genero"] == filters.genero]
+    if filters.sexo_jefe:
+        result = [b for b in result if b["genero"] == filters.sexo_jefe]
 
-    if filters.edad_min is not None:
-        result = [b for b in result if b["edad"] >= filters.edad_min]
-
-    if filters.edad_max is not None:
-        result = [b for b in result if b["edad"] <= filters.edad_max]
-
-    if filters.miembros_hogar_min is not None:
-        result = [b for b in result if b["miembros_hogar"] >= filters.miembros_hogar_min]
-
-    if filters.miembros_hogar_max is not None:
-        result = [b for b in result if b["miembros_hogar"] <= filters.miembros_hogar_max]
-
-    if filters.con_menores_5:
+    if filters.tiene_menores_5:
         result = [b for b in result if b["menores_5"] > 0]
 
-    if filters.con_adultos_mayores:
+    if filters.tiene_adultos_mayores:
         result = [b for b in result if b["adultos_mayores"] > 0]
-
-    if filters.nivel_privacion:
-        result = [b for b in result if b["nivel_privacion"] == filters.nivel_privacion]
 
     if filters.ipm_min is not None:
         result = [b for b in result if b["ipm"] >= filters.ipm_min]
 
     if filters.ipm_max is not None:
         result = [b for b in result if b["ipm"] <= filters.ipm_max]
-
-    if filters.institucion_code:
-        result = [
-            b for b in result
-            if any(iv["institucion_code"] == filters.institucion_code for iv in b["intervenciones"])
-        ]
-
-    if filters.tipo_intervencion_code:
-        result = [
-            b for b in result
-            if any(iv["tipo_code"] == filters.tipo_intervencion_code for iv in b["intervenciones"])
-        ]
-
-    if filters.sin_intervencion:
-        result = [b for b in result if len(b["intervenciones"]) == 0]
 
     if filters.buscar:
         term = filters.buscar.lower()
