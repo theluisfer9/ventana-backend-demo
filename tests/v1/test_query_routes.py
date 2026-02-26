@@ -21,7 +21,8 @@ def _seed_datasource(db_session, institution_id=None, code="QRY_DS"):
         code=code,
         name="Query Test DS",
         ch_table="rsh.test_table",
-        base_filter="prog_test = 1",
+        base_filter_columns=["prog_test"],
+        base_filter_logic="OR",
         institution_id=institution_id,
         is_active=True,
     )

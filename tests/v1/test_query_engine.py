@@ -122,43 +122,43 @@ class TestBuildWhere:
         return {c.column_name: c for c in SAMPLE_COLUMNS if names is None or c.column_name in names}
 
     def test_no_filters_no_base(self):
-        where, params = build_where(None, [], self._col_map())
+        where, params = build_where(None, None, [], self._col_map())
         assert where == "1=1"
         assert params == {}
 
     def test_base_filter_only(self):
-        where, params = build_where("prog_fodes = 1", [], self._col_map())
+        where, params = build_where(["prog_fodes"], "OR", [], self._col_map())
         assert where == "prog_fodes = 1"
         assert params == {}
 
     def test_eq_filter(self):
         filters = [{"column": "departamento", "op": "eq", "value": "01"}]
-        where, params = build_where(None, filters, self._col_map())
+        where, params = build_where(None, None, filters, self._col_map())
         assert "departamento = {p_0:String}" in where
         assert params["p_0"] == "01"
 
     def test_neq_filter(self):
         filters = [{"column": "departamento", "op": "neq", "value": "01"}]
-        where, params = build_where(None, filters, self._col_map())
+        where, params = build_where(None, None, filters, self._col_map())
         assert "departamento != {p_0:String}" in where
 
     def test_gt_lt_gte_lte_integer(self):
         col_map = self._col_map(["hogar_id"])
         for op, sql_op in [("gt", ">"), ("lt", "<"), ("gte", ">="), ("lte", "<=")]:
             filters = [{"column": "hogar_id", "op": op, "value": 100}]
-            where, params = build_where(None, filters, col_map)
+            where, params = build_where(None, None, filters, col_map)
             assert f"hogar_id {sql_op} {{p_0:Int64}}" in where
             assert params["p_0"] == 100
 
     def test_like_filter(self):
         filters = [{"column": "municipio", "op": "like", "value": "mix"}]
-        where, params = build_where(None, filters, self._col_map())
+        where, params = build_where(None, None, filters, self._col_map())
         assert "municipio ILIKE {p_0:String}" in where
         assert params["p_0"] == "%mix%"
 
     def test_in_filter(self):
         filters = [{"column": "departamento", "op": "in", "value": ["01", "02", "03"]}]
-        where, params = build_where(None, filters, self._col_map())
+        where, params = build_where(None, None, filters, self._col_map())
         assert "departamento IN" in where
         assert params["p_0_0"] == "01"
         assert params["p_0_1"] == "02"
@@ -166,23 +166,24 @@ class TestBuildWhere:
 
     def test_base_filter_plus_user_filters(self):
         filters = [{"column": "departamento", "op": "eq", "value": "01"}]
-        where, params = build_where("prog_fodes = 1", filters, self._col_map())
+        where, params = build_where(["prog_fodes"], "OR", filters, self._col_map())
         assert where.startswith("prog_fodes = 1 AND ")
         assert "departamento =" in where
 
     def test_boolean_type_maps_to_int8(self):
         filters = [{"column": "estufa_mejorada", "op": "eq", "value": 1}]
-        where, params = build_where(None, filters, self._col_map())
+        where, params = build_where(None, None, filters, self._col_map())
         assert "Int8" in where
 
 
 # ==================== execute_query ====================
 
 class TestExecuteQuery:
-    def _make_ds(self, base_filter=None):
+    def _make_ds(self, base_filter_columns=None, base_filter_logic="OR"):
         ds = MagicMock()
         ds.ch_table = "rsh.beneficios_x_hogar"
-        ds.base_filter = base_filter
+        ds.base_filter_columns = base_filter_columns or []
+        ds.base_filter_logic = base_filter_logic
         ds.columns_def = SAMPLE_COLUMNS
         return ds
 
@@ -209,7 +210,7 @@ class TestExecuteQuery:
         assert rows[0]["departamento"] == "Guat"
 
     def test_calls_count_and_data_queries(self):
-        ds = self._make_ds(base_filter="prog_fodes = 1")
+        ds = self._make_ds(base_filter_columns=["prog_fodes"])
         ch = self._make_ch_client()
         cols = [_make_col("hogar_id", data_type=ColumnDataType.INTEGER)]
 
@@ -285,10 +286,11 @@ class TestBuildGroupBy:
 # ==================== execute_query with GROUP BY ====================
 
 class TestExecuteQueryGroupBy:
-    def _make_ds(self, base_filter=None):
+    def _make_ds(self, base_filter_columns=None, base_filter_logic="OR"):
         ds = MagicMock()
         ds.ch_table = "rsh.beneficios_x_hogar"
-        ds.base_filter = base_filter
+        ds.base_filter_columns = base_filter_columns or []
+        ds.base_filter_logic = base_filter_logic
         ds.columns_def = SAMPLE_COLUMNS
         return ds
 

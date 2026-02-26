@@ -10,7 +10,7 @@ from api.v1.models.role import Role
 def _seed_datasource(db_session, code="RD_DS", name="Test DS", is_active=True):
     ds = DataSource(
         code=code, name=name, ch_table="rsh.test_table",
-        base_filter=None, is_active=is_active,
+        base_filter_columns=[], base_filter_logic="OR", is_active=is_active,
     )
     db_session.add(ds)
     db_session.flush()
