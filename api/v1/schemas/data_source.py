@@ -47,7 +47,8 @@ class DataSourceCreate(BaseModel):
     name: str
     description: Optional[str] = None
     ch_table: str
-    base_filter: Optional[str] = None
+    base_filter_columns: list[str] = []
+    base_filter_logic: str = "OR"
     institution_id: Optional[UUID] = None
 
 
@@ -55,7 +56,8 @@ class DataSourceUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     ch_table: Optional[str] = None
-    base_filter: Optional[str] = None
+    base_filter_columns: Optional[list[str]] = None
+    base_filter_logic: Optional[str] = None
     institution_id: Optional[UUID] = None
     is_active: Optional[bool] = None
 
@@ -66,7 +68,8 @@ class DataSourceOut(BaseModel):
     name: str
     description: Optional[str] = None
     ch_table: str
-    base_filter: Optional[str] = None
+    base_filter_columns: list[str] = []
+    base_filter_logic: str = "OR"
     institution_id: Optional[UUID] = None
     is_active: bool
     columns: list[DataSourceColumnOut] = []
@@ -80,6 +83,8 @@ class DataSourceListItem(BaseModel):
     code: str
     name: str
     description: Optional[str] = None
+    ch_table: str = ""
+    base_filter_columns: list[str] = []
     is_active: bool
     column_count: int = 0
 
