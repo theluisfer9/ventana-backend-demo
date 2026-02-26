@@ -27,26 +27,27 @@ _AGG_ALIAS = {
 # ClickHouse identifiers: letters, digits, underscores, dots (for schema.table)
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*$")
 
-# Dangerous SQL keywords that should never appear in base_filter
-_DANGEROUS_KEYWORDS = re.compile(
-    r"\b(DROP|ALTER|TRUNCATE|INSERT|UPDATE|DELETE|CREATE|GRANT|REVOKE|ATTACH|DETACH|RENAME|SYSTEM)\b",
-    re.IGNORECASE,
-)
-
-
-def _validate_base_filter(base_filter: str) -> None:
-    """Reject base_filter values containing dangerous SQL statements."""
-    if _DANGEROUS_KEYWORDS.search(base_filter):
-        raise ValueError(f"base_filter contiene SQL peligroso: {base_filter!r}")
-    if ";" in base_filter:
-        raise ValueError("base_filter no puede contener punto y coma")
-
 
 def _safe_identifier(name: str) -> str:
     """Validate that a string is a safe SQL identifier. Raises ValueError if not."""
     if not _IDENTIFIER_RE.match(name):
         raise ValueError(f"Identificador SQL no válido: {name!r}")
     return name
+
+
+def build_where_from_columns(columns: list[str], logic: str) -> str | None:
+    """Build a WHERE clause fragment from structured base_filter_columns.
+
+    Each column becomes `column = 1`. Multiple columns are joined with logic (AND/OR).
+    Returns None if columns is empty.
+    """
+    if not columns:
+        return None
+    parts = [f"{_safe_identifier(col)} = 1" for col in columns]
+    if len(parts) == 1:
+        return parts[0]
+    joiner = f" {logic.upper()} "
+    return f"({joiner.join(parts)})"
 
 
 def build_select(columns: list[DataSourceColumn]) -> str:
@@ -76,16 +77,18 @@ def build_group_by(group_column_names: list[str]) -> str:
 
 
 def build_where(
-    base_filter: str | None,
+    base_filter_columns: list[str] | None,
+    base_filter_logic: str | None,
     filters: list[dict],
     columns_map: dict[str, DataSourceColumn],
 ) -> tuple[str, dict]:
     conditions = []
     params = {}
 
-    if base_filter:
-        _validate_base_filter(base_filter)
-        conditions.append(base_filter)
+    if base_filter_columns:
+        base_clause = build_where_from_columns(base_filter_columns, base_filter_logic or "OR")
+        if base_clause:
+            conditions.append(base_clause)
 
     for i, f in enumerate(filters):
         col_name = _safe_identifier(f["column"])
@@ -130,7 +133,9 @@ def execute_query(
 ) -> tuple[list[dict], int]:
     col_map = {c.column_name: c for c in ds.columns_def}
     table_name = _safe_identifier(ds.ch_table)
-    where_clause, params = build_where(ds.base_filter, filters, col_map)
+    where_clause, params = build_where(
+        ds.base_filter_columns, ds.base_filter_logic, filters, col_map
+    )
 
     if group_by and aggregations:
         # Grouped query
