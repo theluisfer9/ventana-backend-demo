@@ -84,7 +84,7 @@ def dashboard(
     """Estadisticas del dashboard institucional."""
     code, preset = _get_preset(current_user)
     interv_cols = preset["intervention_columns"]
-    raw = query_consulta_dashboard(client, preset["base_filter"], interv_cols)
+    raw = query_consulta_dashboard(client, preset["base_filter_columns"], preset["base_filter_logic"], interv_cols)
 
     por_intervencion = []
     intervenciones = raw.get("intervenciones", {})
@@ -114,7 +114,7 @@ def catalogos(
 ):
     """Obtener catalogos de filtros scoped a la institucion."""
     code, preset = _get_preset(current_user)
-    raw = query_consulta_catalogos(client, preset["base_filter"])
+    raw = query_consulta_catalogos(client, preset["base_filter_columns"], preset["base_filter_logic"])
     return ConsultaCatalogosResponse(
         departamentos=[
             CatalogoItem(code=d["codigo"], name=d["nombre"])
@@ -140,7 +140,7 @@ def listar(
     filter_kwargs.update(_extract_intervention_filters(request, preset))
 
     rows, total = query_consulta_lista(
-        client, preset["base_filter"], interv_cols,
+        client, preset["base_filter_columns"], preset["base_filter_logic"], interv_cols,
         offset=offset, limit=limit, **filter_kwargs
     )
     items = [row_to_beneficio_resumen(r, interv_cols) for r in rows]
@@ -157,7 +157,7 @@ def detalle(
     code, preset = _get_preset(current_user)
     interv_cols = preset["intervention_columns"]
     result = query_consulta_detalle(
-        client, preset["base_filter"], interv_cols, hogar_id
+        client, preset["base_filter_columns"], preset["base_filter_logic"], interv_cols, hogar_id
     )
     if result is None:
         raise HTTPException(

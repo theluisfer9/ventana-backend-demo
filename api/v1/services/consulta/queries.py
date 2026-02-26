@@ -1,8 +1,13 @@
 """Queries a ClickHouse para consulta institucional (vw_beneficios_x_hogar)."""
 
+from api.v1.services.query_engine.engine import build_where_from_columns
+
 
 def build_consulta_filters(
-    base_filter: str, intervention_columns: list[str], **kwargs
+    base_filter_columns: list[str],
+    base_filter_logic: str,
+    intervention_columns: list[str],
+    **kwargs,
 ) -> tuple[str, dict]:
     """
     Construye clausula WHERE combinando base_filter institucional + filtros del usuario.
@@ -10,8 +15,12 @@ def build_consulta_filters(
     Returns:
         (where_clause, parameters)
     """
-    conditions = [base_filter]
+    conditions = []
     params = {}
+
+    base_clause = build_where_from_columns(base_filter_columns, base_filter_logic)
+    if base_clause:
+        conditions.append(base_clause)
 
     if departamento := kwargs.get("departamento_codigo"):
         conditions.append("trim(ig3_codigo_departamento) = {depto:String}")
@@ -55,7 +64,8 @@ def _build_select_columns(intervention_columns: list[str]) -> str:
 
 def query_consulta_lista(
     client,
-    base_filter: str,
+    base_filter_columns: list[str],
+    base_filter_logic: str,
     intervention_columns: list[str],
     offset: int = 0,
     limit: int = 100,
@@ -63,7 +73,7 @@ def query_consulta_lista(
 ) -> tuple[list[dict], int]:
     """Lista paginada de hogares con base_filter + filtros usuario."""
     where_clause, params = build_consulta_filters(
-        base_filter, intervention_columns, **filter_kwargs
+        base_filter_columns, base_filter_logic, intervention_columns, **filter_kwargs
     )
 
     count_query = f"""
@@ -99,18 +109,22 @@ def query_consulta_lista(
 
 def query_consulta_detalle(
     client,
-    base_filter: str,
+    base_filter_columns: list[str],
+    base_filter_logic: str,
     intervention_columns: list[str],
     hogar_id: int,
 ) -> dict | None:
     """Detalle de un hogar scoped al base_filter institucional."""
     select_cols = _build_select_columns(intervention_columns)
 
+    base_clause = build_where_from_columns(base_filter_columns, base_filter_logic)
+    where = f"{base_clause} AND hogar_id = {{hogar_id:Int64}}" if base_clause else "hogar_id = {hogar_id:Int64}"
+
     query = f"""
         SELECT
             {select_cols}
         FROM rsh.vw_beneficios_x_hogar
-        WHERE {base_filter} AND hogar_id = {{hogar_id:Int64}}
+        WHERE {where}
         LIMIT 1
     """
     result = client.query(query, parameters={"hogar_id": hogar_id})
@@ -120,9 +134,12 @@ def query_consulta_detalle(
 
 
 def query_consulta_dashboard(
-    client, base_filter: str, intervention_columns: list[str]
+    client, base_filter_columns: list[str], base_filter_logic: str, intervention_columns: list[str]
 ) -> dict:
     """Estadisticas globales del dashboard institucional."""
+    base_clause = build_where_from_columns(base_filter_columns, base_filter_logic)
+    where_filter = base_clause or "1=1"
+
     global_query = f"""
         SELECT
             count() as total_hogares,
@@ -130,7 +147,7 @@ def query_consulta_dashboard(
             uniq(ig4_codigo_municipio) as total_municipios,
             sum(personas) as total_personas
         FROM rsh.vw_beneficios_x_hogar
-        WHERE {base_filter}
+        WHERE {where_filter}
     """
     global_result = client.query(global_query, parameters={})
     stats = dict(zip(global_result.column_names, global_result.result_rows[0]))
@@ -142,7 +159,7 @@ def query_consulta_dashboard(
             trim(ig3_codigo_departamento) as departamento_codigo,
             count() as cantidad_hogares
         FROM rsh.vw_beneficios_x_hogar
-        WHERE {base_filter}
+        WHERE {where_filter}
         GROUP BY ig3_departamento, ig3_codigo_departamento
         ORDER BY cantidad_hogares DESC
         LIMIT 22
@@ -161,7 +178,7 @@ def query_consulta_dashboard(
         SELECT
             {sumif_parts}
         FROM rsh.vw_beneficios_x_hogar
-        WHERE {base_filter}
+        WHERE {where_filter}
     """
     interv_result = client.query(interv_query, parameters={})
     interv_row = dict(zip(interv_result.column_names, interv_result.result_rows[0]))
@@ -173,8 +190,11 @@ def query_consulta_dashboard(
     }
 
 
-def query_consulta_catalogos(client, base_filter: str) -> dict:
+def query_consulta_catalogos(client, base_filter_columns: list[str], base_filter_logic: str) -> dict:
     """Obtiene valores DISTINCT de catalogos scoped al base_filter."""
+    base_clause = build_where_from_columns(base_filter_columns, base_filter_logic)
+    where_filter = base_clause or "1=1"
+
     catalogos = {}
 
     depto_query = f"""
@@ -182,7 +202,7 @@ def query_consulta_catalogos(client, base_filter: str) -> dict:
             trim(ig3_codigo_departamento) as codigo,
             ig3_departamento as nombre
         FROM rsh.vw_beneficios_x_hogar
-        WHERE {base_filter} AND ig3_codigo_departamento != ''
+        WHERE {where_filter} AND ig3_codigo_departamento != ''
         ORDER BY codigo
     """
     depto_result = client.query(depto_query, parameters={})
