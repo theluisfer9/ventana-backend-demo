@@ -107,6 +107,18 @@ def test_permissions(db_session):
             name="Leer reportes",
             module="reports",
         ),
+        Permission(
+            id=uuid4(),
+            code="databases:read",
+            name="Leer bases de datos",
+            module="databases",
+        ),
+        Permission(
+            id=uuid4(),
+            code="system:config",
+            name="Configurar sistema",
+            module="system",
+        ),
     ]
 
     for perm in permissions:
@@ -127,12 +139,14 @@ def test_roles(db_session, test_permissions):
         is_system=True,
     )
 
-    # Add all user permissions to admin
+    # Add all permissions to admin
     admin_role.permissions = [
         test_permissions["users:read"],
         test_permissions["users:create"],
         test_permissions["users:update"],
         test_permissions["users:delete"],
+        test_permissions["databases:read"],
+        test_permissions["system:config"],
     ]
 
     analyst_role = Role(

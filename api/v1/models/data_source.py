@@ -68,7 +68,7 @@ class DataSourceColumn(BasePG):
     category = Column(SAEnum(ColumnCategory), nullable=False, default=ColumnCategory.DIMENSION)
     is_selectable = Column(Boolean, default=True)
     is_filterable = Column(Boolean, default=True)
-    is_groupable = Column(Boolean, default=False)
+    is_groupable = Column(Boolean, default=False, server_default="false")
     display_order = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -121,5 +121,9 @@ class RoleDataSource(BasePG):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     role_id = Column(UUID(as_uuid=True), ForeignKey("roles.id", ondelete="CASCADE"), nullable=False)
     datasource_id = Column(UUID(as_uuid=True), ForeignKey("data_sources.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    role = relationship("Role", backref="role_datasources")
+    data_source = relationship("DataSource", backref="role_datasources")
 
     __table_args__ = (UniqueConstraint("role_id", "datasource_id"),)

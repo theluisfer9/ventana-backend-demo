@@ -25,12 +25,13 @@ def upgrade() -> None:
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('role_id', sa.UUID(), nullable=False),
     sa.Column('datasource_id', sa.UUID(), nullable=False),
+    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
     sa.ForeignKeyConstraint(['datasource_id'], ['data_sources.id'], ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['role_id'], ['roles.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('role_id', 'datasource_id')
     )
-    op.add_column('data_source_columns', sa.Column('is_groupable', sa.Boolean(), nullable=True))
+    op.add_column('data_source_columns', sa.Column('is_groupable', sa.Boolean(), nullable=False, server_default=sa.text('false')))
     op.add_column('saved_queries', sa.Column('group_by', postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default='[]'))
     op.add_column('saved_queries', sa.Column('aggregations', postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default='[]'))
     # ### end Alembic commands ###

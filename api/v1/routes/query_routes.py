@@ -1,9 +1,10 @@
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_
 from api.v1.config.database import get_sync_db_pg, get_ch_client
 from api.v1.dependencies.auth_dependency import get_current_active_user
+from api.v1.dependencies.permission_dependency import RequireAnyPermission
 from api.v1.models.user import User
 from api.v1.models.data_source import DataSource, SavedQuery, RoleDataSource
 from api.v1.schemas.query_builder import (
@@ -12,9 +13,15 @@ from api.v1.schemas.query_builder import (
 )
 from api.v1.services.query_engine.validators import validate_columns, validate_filters, validate_group_by, validate_aggregations
 from api.v1.services.query_engine.engine import execute_query
-from api.v1.auth.permissions import RoleCode
+from api.v1.auth.permissions import PermissionCode
 
 router = APIRouter(prefix="/queries", tags=["Query Builder"])
+
+# Permission guard: all query routes require at least one of these
+_query_permission = RequireAnyPermission([
+    PermissionCode.DATABASES_READ,
+    PermissionCode.REPORTS_READ,
+])
 
 
 def _build_columns_meta(
@@ -48,7 +55,10 @@ def _build_columns_meta(
 
 
 def _is_admin(user: User) -> bool:
-    return user.role and user.role.code == RoleCode.ADMIN
+    if not user.role:
+        return False
+    user_permissions = {p.code for p in user.role.permissions}
+    return PermissionCode.SYSTEM_CONFIG.value in user_permissions
 
 
 def _get_user_datasource(ds_id: UUID, user: User, db: Session) -> DataSource:
@@ -83,7 +93,7 @@ def _can_access_saved_query(sq: SavedQuery, user: User) -> bool:
 
 @router.get("/datasources")
 def list_available_datasources(
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(_query_permission),
     db: Session = Depends(get_sync_db_pg),
 ):
     query = db.query(DataSource).options(joinedload(DataSource.columns_def)).filter(DataSource.is_active == True)
@@ -120,7 +130,7 @@ def list_available_datasources(
 @router.post("/execute", response_model=QueryExecuteResponse)
 def execute_adhoc_query(
     body: QueryExecuteRequest,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(_query_permission),
     db: Session = Depends(get_sync_db_pg),
     client=Depends(get_ch_client),
 ):
@@ -158,13 +168,20 @@ def execute_adhoc_query(
 @router.post("/saved", status_code=status.HTTP_201_CREATED)
 def save_query(
     body: SavedQueryCreate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(_query_permission),
     db: Session = Depends(get_sync_db_pg),
 ):
     ds = _get_user_datasource(body.datasource_id, current_user, db)
     validate_columns(body.selected_columns, ds.columns_def)
     filters_dicts = [f.model_dump() for f in body.filters]
     validate_filters(filters_dicts, ds.columns_def)
+
+    # Validate group_by and aggregations on save too
+    if body.group_by:
+        validate_group_by(body.group_by, ds.columns_def)
+    agg_dicts = [a.model_dump() for a in body.aggregations] if body.aggregations else []
+    if agg_dicts:
+        validate_aggregations(agg_dicts, ds.columns_def)
 
     # Only admins can share queries to institutions
     institution_id = None
@@ -186,7 +203,7 @@ def save_query(
         selected_columns=body.selected_columns,
         filters=filters_dicts,
         group_by=body.group_by or [],
-        aggregations=[a.model_dump() for a in body.aggregations] if body.aggregations else [],
+        aggregations=agg_dicts,
         institution_id=institution_id,
         is_shared=is_shared,
     )
@@ -198,7 +215,7 @@ def save_query(
 
 @router.get("/saved")
 def list_saved_queries(
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(_query_permission),
     db: Session = Depends(get_sync_db_pg),
 ):
     """
@@ -257,7 +274,7 @@ def list_saved_queries(
 @router.get("/saved/{query_id}")
 def get_saved_query(
     query_id: UUID,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(_query_permission),
     db: Session = Depends(get_sync_db_pg),
 ):
     sq = (
@@ -294,7 +311,7 @@ def get_saved_query(
 def update_saved_query(
     query_id: UUID,
     body: SavedQueryUpdate,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(_query_permission),
     db: Session = Depends(get_sync_db_pg),
 ):
     """Actualizar una consulta guardada. Solo el creador o admin pueden editar."""
@@ -313,8 +330,8 @@ def update_saved_query(
     if sq.user_id != current_user.id and not _is_admin(current_user):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tiene permiso para editar esta consulta")
 
-    # Validar columnas, filtros y group_by si se actualizan
-    if body.selected_columns is not None or body.filters is not None or body.group_by is not None:
+    # Validar columnas, filtros, group_by y aggregations si se actualizan
+    if body.selected_columns is not None or body.filters is not None or body.group_by is not None or body.aggregations is not None:
         ds = _get_user_datasource(sq.datasource_id, current_user, db)
         if body.selected_columns is not None:
             validate_columns(body.selected_columns, ds.columns_def)
@@ -323,6 +340,9 @@ def update_saved_query(
             validate_filters(filters_dicts, ds.columns_def)
         if body.group_by is not None and body.group_by:
             validate_group_by(body.group_by, ds.columns_def)
+        if body.aggregations is not None and body.aggregations:
+            agg_dicts = [a.model_dump() for a in body.aggregations]
+            validate_aggregations(agg_dicts, ds.columns_def)
 
     # Aplicar cambios
     update_data = body.model_dump(exclude_unset=True)
@@ -367,7 +387,7 @@ def update_saved_query(
 @router.delete("/saved/{query_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_saved_query(
     query_id: UUID,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(_query_permission),
     db: Session = Depends(get_sync_db_pg),
 ):
     sq = db.query(SavedQuery).filter(SavedQuery.id == query_id).first()
@@ -383,7 +403,9 @@ def delete_saved_query(
 @router.post("/saved/{query_id}/execute", response_model=QueryExecuteResponse)
 def execute_saved_query(
     query_id: UUID,
-    current_user: User = Depends(get_current_active_user),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=1000),
+    current_user: User = Depends(_query_permission),
     db: Session = Depends(get_sync_db_pg),
     client=Depends(get_ch_client),
 ):
@@ -401,7 +423,7 @@ def execute_saved_query(
     validate_filters(sq.filters or [], ds.columns_def)
 
     rows, total = execute_query(
-        client, ds, validated_cols, sq.filters or [], 0, 20,
+        client, ds, validated_cols, sq.filters or [], offset, limit,
         group_by=sq.group_by or None,
         aggregations=sq.aggregations or None,
     )
@@ -409,5 +431,5 @@ def execute_saved_query(
     columns_meta = _build_columns_meta(sq.group_by or None, sq.aggregations or None, ds.columns_def, validated_cols)
 
     return QueryExecuteResponse(
-        items=rows, total=total, offset=0, limit=20, columns_meta=columns_meta,
+        items=rows, total=total, offset=offset, limit=limit, columns_meta=columns_meta,
     )
