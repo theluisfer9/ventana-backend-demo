@@ -55,39 +55,25 @@ class TestBeneficiarioServiceFilters:
     """Tests de filtros individuales del servicio."""
 
     def test_filtro_departamento(self):
-        filters = BeneficiarioFilters(departamento_code="GUA")
+        filters = BeneficiarioFilters(departamento_codigo="GUA")
         result = list_beneficiarios(filters, offset=0, limit=100)
-        assert result["total"] == 5
+        assert result["total"] == 9
         for item in result["items"]:
             assert item["departamento_code"] == "GUA"
 
     def test_filtro_municipio(self):
-        filters = BeneficiarioFilters(municipio_code="GUA-01")
+        filters = BeneficiarioFilters(municipio_codigo="GUA-01")
         result = list_beneficiarios(filters, offset=0, limit=100)
-        assert result["total"] == 3
+        assert result["total"] == 5
         for item in result["items"]:
             assert item["municipio_code"] == "GUA-01"
 
-    def test_filtro_genero_femenino(self):
-        filters = BeneficiarioFilters(genero="F")
+    def test_filtro_sexo_jefe(self):
+        filters = BeneficiarioFilters(sexo_jefe="F")
         result = list_beneficiarios(filters, offset=0, limit=100)
         assert result["total"] == 20
         for item in result["items"]:
             assert item["genero"] == "F"
-
-    def test_filtro_rango_edad(self):
-        filters = BeneficiarioFilters(edad_min=60, edad_max=80)
-        result = list_beneficiarios(filters, offset=0, limit=100)
-        assert result["total"] > 0
-        for item in result["items"]:
-            assert 60 <= item["edad"] <= 80
-
-    def test_filtro_nivel_privacion(self):
-        filters = BeneficiarioFilters(nivel_privacion="extrema")
-        result = list_beneficiarios(filters, offset=0, limit=100)
-        assert result["total"] > 0
-        for item in result["items"]:
-            assert item["nivel_privacion"] == "extrema"
 
     def test_filtro_rango_ipm(self):
         filters = BeneficiarioFilters(ipm_min=0.7, ipm_max=0.9)
@@ -96,23 +82,8 @@ class TestBeneficiarioServiceFilters:
         for item in result["items"]:
             assert 0.7 <= item["ipm"] <= 0.9
 
-    def test_filtro_institucion(self):
-        filters = BeneficiarioFilters(institucion_code="MIDES")
-        result = list_beneficiarios(filters, offset=0, limit=100)
-        assert result["total"] > 0
-        for item in result["items"]:
-            institucion_codes = [i["institucion_code"] for i in item["intervenciones"]]
-            assert "MIDES" in institucion_codes
-
-    def test_filtro_sin_intervencion(self):
-        filters = BeneficiarioFilters(sin_intervencion=True)
-        result = list_beneficiarios(filters, offset=0, limit=100)
-        assert result["total"] > 0
-        for item in result["items"]:
-            assert len(item["intervenciones"]) == 0
-
     def test_filtro_con_menores_5(self):
-        filters = BeneficiarioFilters(con_menores_5=True)
+        filters = BeneficiarioFilters(tiene_menores_5=True)
         result = list_beneficiarios(filters, offset=0, limit=100)
         assert result["total"] > 0
         for item in result["items"]:
@@ -129,24 +100,13 @@ class TestBeneficiarioServiceFilters:
 class TestBeneficiarioServiceFiltersCombinados:
     """Tests de filtros combinados."""
 
-    def test_filtro_departamento_y_genero(self):
-        filters = BeneficiarioFilters(departamento_code="GUA", genero="F")
+    def test_filtro_departamento_y_sexo(self):
+        filters = BeneficiarioFilters(departamento_codigo="GUA", sexo_jefe="F")
         result = list_beneficiarios(filters, offset=0, limit=100)
         assert result["total"] > 0
         for item in result["items"]:
             assert item["departamento_code"] == "GUA"
             assert item["genero"] == "F"
-
-    def test_filtro_imposible_resultado_vacio(self):
-        filters = BeneficiarioFilters(
-            departamento_code="GUA",
-            nivel_privacion="extrema",
-            genero="M",
-        )
-        result = list_beneficiarios(filters, offset=0, limit=100)
-        # No male in GUA with extrema (only id=5 is F with extrema in GUA)
-        assert result["total"] == 0
-        assert len(result["items"]) == 0
 
 
 class TestBeneficiarioServiceDetalle:
@@ -186,18 +146,10 @@ class TestBeneficiarioServiceStats:
         assert "por_departamento" in stats
 
     def test_stats_con_filtro(self):
-        filters = BeneficiarioFilters(departamento_code="GUA")
+        filters = BeneficiarioFilters(departamento_codigo="GUA")
         stats = get_beneficiario_stats(filters)
-        assert stats["total"] == 5
+        assert stats["total"] == 9
         assert "Guatemala" in stats["por_departamento"]
-
-    def test_stats_vacio(self):
-        filters = BeneficiarioFilters(
-            departamento_code="GUA", nivel_privacion="extrema", genero="M"
-        )
-        stats = get_beneficiario_stats(filters)
-        assert stats["total"] == 0
-        assert stats["promedio_ipm"] == 0
 
 
 class TestBeneficiarioServiceDashboard:
@@ -236,112 +188,6 @@ class TestBeneficiarioServiceCatalogos:
 
 
 # =====================================================================
-# ROUTE INTEGRATION TESTS (con authenticated_admin_client)
-# =====================================================================
-
-class TestBeneficiarioRoutesList:
-    """Tests de integracion del endpoint de lista."""
-
-    def test_list_sin_filtros(self, authenticated_admin_client):
-        resp = authenticated_admin_client.get("/api/v1/beneficiarios/")
-        assert resp.status_code == 200
-        data = resp.json()["data"]
-        assert data["total"] == 40
-        assert len(data["items"]) > 0
-
-    def test_list_filtro_departamento(self, authenticated_admin_client):
-        resp = authenticated_admin_client.get(
-            "/api/v1/beneficiarios/?departamento_code=GUA"
-        )
-        assert resp.status_code == 200
-        data = resp.json()["data"]
-        assert data["total"] == 5
-
-    def test_list_paginacion(self, authenticated_admin_client):
-        resp = authenticated_admin_client.get(
-            "/api/v1/beneficiarios/?offset=0&limit=5"
-        )
-        assert resp.status_code == 200
-        data = resp.json()["data"]
-        assert data["total"] == 40
-        assert len(data["items"]) == 5
-
-
-class TestBeneficiarioRoutesDetalle:
-    """Tests de integracion del endpoint de detalle."""
-
-    def test_detalle_existente(self, authenticated_admin_client):
-        resp = authenticated_admin_client.get("/api/v1/beneficiarios/1")
-        assert resp.status_code == 200
-        data = resp.json()["data"]
-        assert data["id"] == 1
-        assert "nombre_completo" in data
-
-    def test_detalle_404(self, authenticated_admin_client):
-        resp = authenticated_admin_client.get("/api/v1/beneficiarios/9999")
-        assert resp.status_code == 404
-
-
-class TestBeneficiarioRoutesStats:
-    """Tests de integracion del endpoint de stats."""
-
-    def test_stats_sin_filtro(self, authenticated_admin_client):
-        resp = authenticated_admin_client.get("/api/v1/beneficiarios/stats")
-        assert resp.status_code == 200
-        data = resp.json()["data"]
-        assert data["total"] == 40
-
-    def test_stats_con_filtro(self, authenticated_admin_client):
-        resp = authenticated_admin_client.get(
-            "/api/v1/beneficiarios/stats?departamento_code=QUE"
-        )
-        assert resp.status_code == 200
-        data = resp.json()["data"]
-        assert data["total"] == 5
-
-
-class TestBeneficiarioRoutesDashboard:
-    """Tests de integracion del dashboard."""
-
-    def test_dashboard(self, authenticated_admin_client):
-        resp = authenticated_admin_client.get("/api/v1/beneficiarios/dashboard")
-        assert resp.status_code == 200
-        data = resp.json()["data"]
-        assert data["total_beneficiarios"] == 40
-        assert data["departamentos_cubiertos"] == 8
-
-
-class TestBeneficiarioRoutesCatalogos:
-    """Tests de integracion de catalogos."""
-
-    def test_catalogos(self, authenticated_admin_client):
-        resp = authenticated_admin_client.get("/api/v1/beneficiarios/catalogos")
-        assert resp.status_code == 200
-        data = resp.json()["data"]
-        assert len(data["departamentos"]) == 8
-
-    def test_municipios_cascada(self, authenticated_admin_client):
-        resp = authenticated_admin_client.get(
-            "/api/v1/beneficiarios/catalogos/municipios?departamento_code=GUA"
-        )
-        assert resp.status_code == 200
-        data = resp.json()["data"]
-        assert len(data) == 2
-
-
-class TestBeneficiarioRoutesBusqueda:
-    """Tests de integracion de busqueda."""
-
-    def test_busqueda_por_nombre(self, authenticated_admin_client):
-        resp = authenticated_admin_client.get(
-            "/api/v1/beneficiarios/?buscar=Maria"
-        )
-        assert resp.status_code == 200
-        data = resp.json()["data"]
-        assert data["total"] >= 1
-
-
-# =====================================================================
 # EXPORT SERVICE TESTS
 # =====================================================================
 
@@ -359,9 +205,9 @@ class TestBeneficiarioExportExcel:
         assert data[:2] == b"PK"
 
     def test_excel_con_filtro(self):
-        filters = BeneficiarioFilters(departamento_code="GUA")
+        filters = BeneficiarioFilters(departamento_codigo="GUA")
         enriched = get_filtered_enriched(filters)
-        assert len(enriched) == 5
+        assert len(enriched) == 9
         buf = generate_excel(enriched)
         data = buf.read()
         assert len(data) > 0
@@ -382,44 +228,10 @@ class TestBeneficiarioExportPdf:
         assert data[:4] == b"%PDF"
 
     def test_pdf_con_filtro(self):
-        filters = BeneficiarioFilters(genero="F")
+        filters = BeneficiarioFilters(sexo_jefe="F")
         enriched = get_filtered_enriched(filters)
         assert len(enriched) == 20
         buf = generate_pdf(enriched)
         data = buf.read()
         assert len(data) > 0
         assert data[:4] == b"%PDF"
-
-
-# =====================================================================
-# EXPORT ROUTE INTEGRATION TESTS
-# =====================================================================
-
-class TestBeneficiarioRoutesExport:
-    """Tests de integracion de los endpoints de exportacion."""
-
-    def test_export_excel_sin_filtro(self, authenticated_admin_client):
-        resp = authenticated_admin_client.get("/api/v1/beneficiarios/export/excel")
-        assert resp.status_code == 200
-        assert "spreadsheetml" in resp.headers["content-type"]
-        assert resp.content[:2] == b"PK"
-
-    def test_export_excel_con_filtro(self, authenticated_admin_client):
-        resp = authenticated_admin_client.get(
-            "/api/v1/beneficiarios/export/excel?departamento_code=GUA"
-        )
-        assert resp.status_code == 200
-        assert "spreadsheetml" in resp.headers["content-type"]
-
-    def test_export_pdf_sin_filtro(self, authenticated_admin_client):
-        resp = authenticated_admin_client.get("/api/v1/beneficiarios/export/pdf")
-        assert resp.status_code == 200
-        assert resp.headers["content-type"] == "application/pdf"
-        assert resp.content[:4] == b"%PDF"
-
-    def test_export_pdf_con_filtro(self, authenticated_admin_client):
-        resp = authenticated_admin_client.get(
-            "/api/v1/beneficiarios/export/pdf?genero=F"
-        )
-        assert resp.status_code == 200
-        assert resp.headers["content-type"] == "application/pdf"

@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID
 
 
@@ -11,6 +11,7 @@ class DataSourceColumnCreate(BaseModel):
     category: str = "DIMENSION"
     is_selectable: bool = True
     is_filterable: bool = True
+    is_groupable: bool = False
     display_order: int = 0
 
 
@@ -21,6 +22,7 @@ class DataSourceColumnUpdate(BaseModel):
     category: Optional[str] = None
     is_selectable: Optional[bool] = None
     is_filterable: Optional[bool] = None
+    is_groupable: Optional[bool] = None
     display_order: Optional[int] = None
 
 
@@ -33,6 +35,7 @@ class DataSourceColumnOut(BaseModel):
     category: str
     is_selectable: bool
     is_filterable: bool
+    is_groupable: bool = False
     display_order: int
 
     class Config:
@@ -44,7 +47,8 @@ class DataSourceCreate(BaseModel):
     name: str
     description: Optional[str] = None
     ch_table: str
-    base_filter: Optional[str] = None
+    base_filter_columns: list[str] = []
+    base_filter_logic: Literal["AND", "OR"] = "OR"
     institution_id: Optional[UUID] = None
 
 
@@ -52,7 +56,8 @@ class DataSourceUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     ch_table: Optional[str] = None
-    base_filter: Optional[str] = None
+    base_filter_columns: Optional[list[str]] = None
+    base_filter_logic: Optional[Literal["AND", "OR"]] = None
     institution_id: Optional[UUID] = None
     is_active: Optional[bool] = None
 
@@ -63,7 +68,8 @@ class DataSourceOut(BaseModel):
     name: str
     description: Optional[str] = None
     ch_table: str
-    base_filter: Optional[str] = None
+    base_filter_columns: list[str] = []
+    base_filter_logic: str = "OR"
     institution_id: Optional[UUID] = None
     is_active: bool
     columns: list[DataSourceColumnOut] = []
@@ -77,6 +83,8 @@ class DataSourceListItem(BaseModel):
     code: str
     name: str
     description: Optional[str] = None
+    ch_table: str = ""
+    base_filter_columns: list[str] = []
     is_active: bool
     column_count: int = 0
 

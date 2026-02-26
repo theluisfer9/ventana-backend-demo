@@ -6,8 +6,8 @@ import pytest
 from unittest.mock import MagicMock
 from fastapi import HTTPException
 
-from api.v1.services.query_engine.validators import validate_columns, validate_filters
-from api.v1.services.query_engine.engine import build_select, build_where, execute_query
+from api.v1.services.query_engine.validators import validate_columns, validate_filters, validate_group_by, validate_aggregations
+from api.v1.services.query_engine.engine import build_select, build_select_grouped, build_group_by, build_where, execute_query
 from api.v1.models.data_source import ColumnDataType, ColumnCategory
 
 
@@ -15,7 +15,7 @@ from api.v1.models.data_source import ColumnDataType, ColumnCategory
 
 def _make_col(name, label=None, data_type=ColumnDataType.TEXT,
               category=ColumnCategory.DIMENSION,
-              is_selectable=True, is_filterable=True):
+              is_selectable=True, is_filterable=True, is_groupable=False):
     col = MagicMock()
     col.column_name = name
     col.label = label or name.replace("_", " ").title()
@@ -23,6 +23,7 @@ def _make_col(name, label=None, data_type=ColumnDataType.TEXT,
     col.category = category
     col.is_selectable = is_selectable
     col.is_filterable = is_filterable
+    col.is_groupable = is_groupable
     col.display_order = 0
     return col
 
@@ -121,43 +122,43 @@ class TestBuildWhere:
         return {c.column_name: c for c in SAMPLE_COLUMNS if names is None or c.column_name in names}
 
     def test_no_filters_no_base(self):
-        where, params = build_where(None, [], self._col_map())
+        where, params = build_where(None, None, [], self._col_map())
         assert where == "1=1"
         assert params == {}
 
     def test_base_filter_only(self):
-        where, params = build_where("prog_fodes = 1", [], self._col_map())
+        where, params = build_where(["prog_fodes"], "OR", [], self._col_map())
         assert where == "prog_fodes = 1"
         assert params == {}
 
     def test_eq_filter(self):
         filters = [{"column": "departamento", "op": "eq", "value": "01"}]
-        where, params = build_where(None, filters, self._col_map())
+        where, params = build_where(None, None, filters, self._col_map())
         assert "departamento = {p_0:String}" in where
         assert params["p_0"] == "01"
 
     def test_neq_filter(self):
         filters = [{"column": "departamento", "op": "neq", "value": "01"}]
-        where, params = build_where(None, filters, self._col_map())
+        where, params = build_where(None, None, filters, self._col_map())
         assert "departamento != {p_0:String}" in where
 
     def test_gt_lt_gte_lte_integer(self):
         col_map = self._col_map(["hogar_id"])
         for op, sql_op in [("gt", ">"), ("lt", "<"), ("gte", ">="), ("lte", "<=")]:
             filters = [{"column": "hogar_id", "op": op, "value": 100}]
-            where, params = build_where(None, filters, col_map)
+            where, params = build_where(None, None, filters, col_map)
             assert f"hogar_id {sql_op} {{p_0:Int64}}" in where
             assert params["p_0"] == 100
 
     def test_like_filter(self):
         filters = [{"column": "municipio", "op": "like", "value": "mix"}]
-        where, params = build_where(None, filters, self._col_map())
+        where, params = build_where(None, None, filters, self._col_map())
         assert "municipio ILIKE {p_0:String}" in where
         assert params["p_0"] == "%mix%"
 
     def test_in_filter(self):
         filters = [{"column": "departamento", "op": "in", "value": ["01", "02", "03"]}]
-        where, params = build_where(None, filters, self._col_map())
+        where, params = build_where(None, None, filters, self._col_map())
         assert "departamento IN" in where
         assert params["p_0_0"] == "01"
         assert params["p_0_1"] == "02"
@@ -165,23 +166,24 @@ class TestBuildWhere:
 
     def test_base_filter_plus_user_filters(self):
         filters = [{"column": "departamento", "op": "eq", "value": "01"}]
-        where, params = build_where("prog_fodes = 1", filters, self._col_map())
+        where, params = build_where(["prog_fodes"], "OR", filters, self._col_map())
         assert where.startswith("prog_fodes = 1 AND ")
         assert "departamento =" in where
 
     def test_boolean_type_maps_to_int8(self):
         filters = [{"column": "estufa_mejorada", "op": "eq", "value": 1}]
-        where, params = build_where(None, filters, self._col_map())
+        where, params = build_where(None, None, filters, self._col_map())
         assert "Int8" in where
 
 
 # ==================== execute_query ====================
 
 class TestExecuteQuery:
-    def _make_ds(self, base_filter=None):
+    def _make_ds(self, base_filter_columns=None, base_filter_logic="OR"):
         ds = MagicMock()
         ds.ch_table = "rsh.beneficios_x_hogar"
-        ds.base_filter = base_filter
+        ds.base_filter_columns = base_filter_columns or []
+        ds.base_filter_logic = base_filter_logic
         ds.columns_def = SAMPLE_COLUMNS
         return ds
 
@@ -208,7 +210,7 @@ class TestExecuteQuery:
         assert rows[0]["departamento"] == "Guat"
 
     def test_calls_count_and_data_queries(self):
-        ds = self._make_ds(base_filter="prog_fodes = 1")
+        ds = self._make_ds(base_filter_columns=["prog_fodes"])
         ch = self._make_ch_client()
         cols = [_make_col("hogar_id", data_type=ColumnDataType.INTEGER)]
 
@@ -244,3 +246,141 @@ class TestExecuteQuery:
 
         count_sql = ch.query.call_args_list[0][0][0]
         assert "departamento =" in count_sql
+
+
+# ==================== build_select_grouped ====================
+
+class TestBuildSelectGrouped:
+    def test_count_star_only(self):
+        group_cols = [_make_col("departamento")]
+        aggs = [{"column": "*", "function": "COUNT"}]
+        result = build_select_grouped(group_cols, aggs)
+        assert result == "departamento, COUNT(*) AS count"
+
+    def test_sum_column(self):
+        group_cols = [_make_col("departamento")]
+        aggs = [
+            {"column": "*", "function": "COUNT"},
+            {"column": "monto", "function": "SUM"},
+        ]
+        result = build_select_grouped(group_cols, aggs)
+        assert result == "departamento, COUNT(*) AS count, SUM(monto) AS sum_monto"
+
+    def test_multiple_group_cols(self):
+        group_cols = [_make_col("departamento"), _make_col("municipio")]
+        aggs = [{"column": "*", "function": "COUNT"}]
+        result = build_select_grouped(group_cols, aggs)
+        assert result == "departamento, municipio, COUNT(*) AS count"
+
+
+# ==================== build_group_by ====================
+
+class TestBuildGroupBy:
+    def test_single_column(self):
+        assert build_group_by(["departamento"]) == "departamento"
+
+    def test_multiple_columns(self):
+        assert build_group_by(["departamento", "municipio"]) == "departamento, municipio"
+
+
+# ==================== execute_query with GROUP BY ====================
+
+class TestExecuteQueryGroupBy:
+    def _make_ds(self, base_filter_columns=None, base_filter_logic="OR"):
+        ds = MagicMock()
+        ds.ch_table = "rsh.beneficios_x_hogar"
+        ds.base_filter_columns = base_filter_columns or []
+        ds.base_filter_logic = base_filter_logic
+        ds.columns_def = SAMPLE_COLUMNS
+        return ds
+
+    def _make_ch_client(self, count=42, rows=None, col_names=None):
+        client = MagicMock()
+        count_result = MagicMock()
+        count_result.result_rows = [[count]]
+        data_result = MagicMock()
+        data_result.column_names = col_names or ["hogar_id", "departamento"]
+        data_result.result_rows = rows or [[1, "Guatemala"], [2, "Escuintla"]]
+        client.query = MagicMock(side_effect=[count_result, data_result])
+        return client
+
+    def test_execute_with_group_by(self):
+        ds = self._make_ds()
+        ch = self._make_ch_client(
+            count=3,
+            rows=[["Guatemala", 100], ["Escuintla", 50], ["Quetzaltenango", 30]],
+            col_names=["departamento", "count"],
+        )
+        cols = [_make_col("departamento")]
+
+        rows, total = execute_query(
+            ch, ds, cols, [], 0, 10,
+            group_by=["departamento"],
+            aggregations=[{"column": "*", "function": "COUNT"}],
+        )
+
+        assert total == 3
+        assert len(rows) == 3
+        # Verify GROUP BY in SQL
+        count_sql = ch.query.call_args_list[0][0][0]
+        assert "GROUP BY" in count_sql
+        data_sql = ch.query.call_args_list[1][0][0]
+        assert "GROUP BY departamento" in data_sql
+        assert "COUNT(*)" in data_sql
+
+
+# ==================== validate_group_by ====================
+
+class TestValidateGroupBy:
+    def test_valid_groupable_columns(self):
+        cols = [
+            _make_col("departamento", is_groupable=True),
+            _make_col("municipio", is_groupable=True),
+            _make_col("monto", category=ColumnCategory.MEASURE, is_groupable=False),
+        ]
+        result = validate_group_by(["departamento"], cols)
+        assert len(result) == 1
+        assert result[0].column_name == "departamento"
+
+    def test_non_groupable_column_raises(self):
+        cols = [_make_col("monto", category=ColumnCategory.MEASURE, is_groupable=False)]
+        with pytest.raises(HTTPException) as exc_info:
+            validate_group_by(["monto"], cols)
+        assert exc_info.value.status_code == 400
+
+    def test_unknown_column_raises(self):
+        cols = [_make_col("departamento", is_groupable=True)]
+        with pytest.raises(HTTPException) as exc_info:
+            validate_group_by(["no_existe"], cols)
+        assert exc_info.value.status_code == 400
+
+    def test_empty_list_returns_empty(self):
+        result = validate_group_by([], [_make_col("departamento", is_groupable=True)])
+        assert result == []
+
+
+# ==================== validate_aggregations ====================
+
+class TestValidateAggregations:
+    def test_count_star_passes(self):
+        cols = [_make_col("departamento")]
+        validate_aggregations([{"column": "*", "function": "COUNT"}], cols)
+
+    def test_valid_column_passes(self):
+        cols = [_make_col("monto", category=ColumnCategory.MEASURE)]
+        validate_aggregations([{"column": "monto", "function": "SUM"}], cols)
+
+    def test_unknown_column_raises(self):
+        cols = [_make_col("departamento")]
+        with pytest.raises(HTTPException) as exc_info:
+            validate_aggregations([{"column": "no_existe", "function": "SUM"}], cols)
+        assert exc_info.value.status_code == 400
+
+    def test_sql_injection_attempt_raises(self):
+        cols = [_make_col("departamento")]
+        with pytest.raises(HTTPException) as exc_info:
+            validate_aggregations([{"column": "1); DROP TABLE x; --", "function": "COUNT"}], cols)
+        assert exc_info.value.status_code == 400
+
+    def test_empty_list_passes(self):
+        validate_aggregations([], [_make_col("departamento")])

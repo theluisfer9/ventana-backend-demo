@@ -3,7 +3,8 @@ Configuracion de presets institucionales para la vista /consulta.
 
 Cada institucion tiene:
 - table: tabla ClickHouse a consultar
-- base_filter: condicion SQL que siempre se aplica (scoping)
+- base_filter_columns: columnas binarias para el filtro base (scoping)
+- base_filter_logic: logica AND/OR para combinar base_filter_columns
 - columns: columnas a mostrar en la lista
 - detail_columns: columnas adicionales para detalle
 - intervention_columns: columnas binarias (0/1) de intervenciones
@@ -35,7 +36,8 @@ INSTITUTIONAL_PRESETS = {
     "FODES": {
         "name": "FODES - Fondo de Desarrollo Social",
         "table": "rsh.vw_beneficios_x_hogar",
-        "base_filter": "prog_fodes = 1",
+        "base_filter_columns": ["prog_fodes"],
+        "base_filter_logic": "OR",
         "columns": [
             "hogar_id",
             "ig3_departamento",
@@ -99,7 +101,8 @@ INSTITUTIONAL_PRESETS = {
     "MAGA": {
         "name": "MAGA - Ministerio de Agricultura",
         "table": "rsh.vw_beneficios_x_hogar",
-        "base_filter": "prog_maga = 1",
+        "base_filter_columns": ["prog_maga"],
+        "base_filter_logic": "OR",
         "columns": [
             "hogar_id",
             "ig3_departamento",
@@ -148,7 +151,8 @@ INSTITUTIONAL_PRESETS = {
     "MIDES": {
         "name": "MIDES - Ministerio de Desarrollo Social",
         "table": "rsh.vw_beneficios_x_hogar",
-        "base_filter": "(prog_bono_social = 1 OR prog_bolsa_social = 1 OR prog_bono_unico = 1)",
+        "base_filter_columns": ["prog_bono_social", "prog_bolsa_social", "prog_bono_unico"],
+        "base_filter_logic": "OR",
         "columns": [
             "hogar_id",
             "ig3_departamento",

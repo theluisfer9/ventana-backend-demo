@@ -14,7 +14,8 @@ class TestDataSourceCRUD:
             "code": code,
             "name": name,
             "ch_table": "rsh.test_table",
-            "base_filter": "prog_test = 1",
+            "base_filter_columns": ["prog_test"],
+            "base_filter_logic": "OR",
         })
 
     def test_create_datasource(self, authenticated_admin_client):
@@ -24,8 +25,21 @@ class TestDataSourceCRUD:
         assert data["code"] == "TEST_DS"
         assert data["name"] == "Test DataSource"
         assert data["ch_table"] == "rsh.test_table"
+        assert data["base_filter_columns"] == ["prog_test"]
+        assert data["base_filter_logic"] == "OR"
         assert data["is_active"] is True
         assert data["columns"] == []
+
+    def test_create_datasource_no_filter(self, authenticated_admin_client):
+        resp = authenticated_admin_client.post("/api/v1/datasources/", json={
+            "code": "NO_FILTER",
+            "name": "No Filter DS",
+            "ch_table": "rsh.test_table",
+        })
+        assert resp.status_code == 201
+        data = resp.json()["data"]
+        assert data["base_filter_columns"] == []
+        assert data["base_filter_logic"] == "OR"
 
     def test_create_duplicate_code_returns_409(self, authenticated_admin_client):
         self._create_ds(authenticated_admin_client, code="DUP")
@@ -41,6 +55,9 @@ class TestDataSourceCRUD:
         codes = [ds["code"] for ds in items]
         assert "DS_A" in codes
         assert "DS_B" in codes
+        ds_a = next(ds for ds in items if ds["code"] == "DS_A")
+        assert ds_a["ch_table"] == "rsh.test_table"
+        assert ds_a["base_filter_columns"] == ["prog_test"]
 
     def test_get_datasource(self, authenticated_admin_client):
         create_resp = self._create_ds(authenticated_admin_client)
@@ -58,12 +75,14 @@ class TestDataSourceCRUD:
         ds_id = create_resp.json()["data"]["id"]
         resp = authenticated_admin_client.put(f"/api/v1/datasources/{ds_id}", json={
             "name": "Updated Name",
-            "base_filter": "prog_new = 1",
+            "base_filter_columns": ["prog_new", "prog_other"],
+            "base_filter_logic": "AND",
         })
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["name"] == "Updated Name"
-        assert data["base_filter"] == "prog_new = 1"
+        assert data["base_filter_columns"] == ["prog_new", "prog_other"]
+        assert data["base_filter_logic"] == "AND"
 
     def test_delete_datasource_soft_deletes(self, authenticated_admin_client):
         create_resp = self._create_ds(authenticated_admin_client)

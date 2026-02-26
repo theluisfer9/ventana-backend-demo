@@ -1,7 +1,8 @@
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query as QueryParam
 from sqlalchemy.orm import Session, joinedload
-from api.v1.config.database import get_sync_db_pg
+from api.v1.config.database import get_sync_db_pg, get_ch_client
+from api.v1.services.query_engine.engine import _safe_identifier
 from api.v1.dependencies.permission_dependency import RequirePermission
 from api.v1.auth.permissions import PermissionCode
 from api.v1.models.user import User
@@ -26,12 +27,14 @@ def list_datasources(
     current_user: User = Depends(RequirePermission(PermissionCode.DATASOURCES_MANAGE)),
     db: Session = Depends(get_sync_db_pg),
 ):
-    sources = db.query(DataSource).order_by(DataSource.code).all()
+    sources = db.query(DataSource).options(joinedload(DataSource.columns_def)).order_by(DataSource.code).all()
     return [
         DataSourceListItem(
             id=ds.id,
             code=ds.code,
             name=ds.name,
+            ch_table=ds.ch_table,
+            base_filter_columns=ds.base_filter_columns or [],
             is_active=ds.is_active,
             column_count=len(ds.columns_def) if ds.columns_def else 0,
         )
@@ -53,6 +56,36 @@ def create_datasource(
     db.commit()
     db.refresh(ds)
     return _datasource_to_out(ds)
+
+
+@router.get("/ch-tables", response_model=list[str])
+def list_ch_tables(
+    current_user: User = Depends(RequirePermission(PermissionCode.DATASOURCES_MANAGE)),
+    ch_client=Depends(get_ch_client),
+):
+    """List available ClickHouse tables for auto-discovery."""
+    result = ch_client.query("SHOW TABLES FROM rsh")
+    tables = [f"rsh.{row[0]}" for row in result.result_rows]
+    return tables
+
+
+@router.get("/ch-columns")
+def list_ch_columns(
+    table: str = QueryParam(..., description="Fully qualified table name, e.g. rsh.vw_beneficios_x_hogar"),
+    current_user: User = Depends(RequirePermission(PermissionCode.DATASOURCES_MANAGE)),
+    ch_client=Depends(get_ch_client),
+):
+    """List columns of a ClickHouse table."""
+    try:
+        safe_table = _safe_identifier(table)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Nombre de tabla no válido: {table!r}")
+    result = ch_client.query(f"DESCRIBE TABLE {safe_table}")
+    columns = [
+        {"name": row[0], "type": row[1]}
+        for row in result.result_rows
+    ]
+    return columns
 
 
 @router.get("/{ds_id}", response_model=DataSourceOut)
@@ -107,6 +140,7 @@ def create_column(
         category=ColumnCategory(body.category),
         is_selectable=body.is_selectable,
         is_filterable=body.is_filterable,
+        is_groupable=body.is_groupable,
         display_order=body.display_order,
     )
     db.add(col)
@@ -163,7 +197,8 @@ def _datasource_to_out(ds: DataSource) -> DataSourceOut:
         code=ds.code,
         name=ds.name,
         ch_table=ds.ch_table,
-        base_filter=ds.base_filter,
+        base_filter_columns=ds.base_filter_columns or [],
+        base_filter_logic=ds.base_filter_logic or "OR",
         institution_id=ds.institution_id,
         is_active=ds.is_active,
         columns=[_column_to_out(c) for c in (ds.columns_def or [])],
@@ -175,9 +210,11 @@ def _column_to_out(col: DataSourceColumn) -> DataSourceColumnOut:
         id=col.id,
         column_name=col.column_name,
         label=col.label,
+        description=col.description,
         data_type=col.data_type.value if col.data_type else "TEXT",
         category=col.category.value if col.category else "DIMENSION",
         is_selectable=col.is_selectable,
         is_filterable=col.is_filterable,
+        is_groupable=col.is_groupable,
         display_order=col.display_order,
     )

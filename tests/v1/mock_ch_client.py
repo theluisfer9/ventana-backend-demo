@@ -31,6 +31,13 @@ class MockClickHouseClient:
         sql_clean = " ".join(sql.split()).lower()
         params = parameters or {}
 
+        # ── ClickHouse introspection ──
+        if sql_clean.startswith("show tables"):
+            return self._handle_show_tables()
+
+        if sql_clean.startswith("describe table"):
+            return self._handle_describe_table(sql_clean)
+
         # ── Consulta: handlers for beneficios_x_hogar (FODES) ──
         if "beneficios_x_hogar" in sql_clean:
             # Dashboard global for consulta
@@ -83,11 +90,11 @@ class MockClickHouseClient:
             return self._handle_detalle(params)
 
         # ── Personas de un hogar ──
-        if "entrevista_personas" in sql_clean and "hogar_id" in params:
+        if ("entrevista_personas" in sql_clean or "w_personas_fecs_v2" in sql_clean) and "hogar_id" in params:
             return self._handle_personas(params)
 
         # ── Vivienda de un hogar ──
-        if "entrevistas_viviendas" in sql_clean and "hogar_id" in params:
+        if ("entrevistas_viviendas" in sql_clean or "vw_vivienda_carac" in sql_clean) and "hogar_id" in params:
             return self._handle_vivienda(params)
 
         # ── Stats: distribucion IPM (GROUP BY ipm_gt_clasificacion) ──
@@ -120,6 +127,42 @@ class MockClickHouseClient:
             return self._handle_catalogo_distinct(sql_clean)
 
         return MockQueryResult()
+
+    # ── Introspection handlers ────────────────────────────────────────
+
+    def _handle_show_tables(self) -> MockQueryResult:
+        """Mock SHOW TABLES FROM rsh."""
+        tables = [
+            "vw_beneficios_x_hogar",
+            "vw_beneficios_x_persona",
+            "vw_pobreza_hogars",
+        ]
+        return MockQueryResult(
+            column_names=["name"],
+            result_rows=[(t,) for t in tables],
+        )
+
+    def _handle_describe_table(self, sql_clean: str) -> MockQueryResult:
+        """Mock DESCRIBE TABLE for known tables."""
+        columns = [
+            ("hogar_id", "Int64", "", "", "", "", ""),
+            ("ig3_departamento", "String", "", "", "", "", ""),
+            ("ig3_codigo_departamento", "String", "", "", "", "", ""),
+            ("ig4_municipio", "String", "", "", "", "", ""),
+            ("personas", "Int32", "", "", "", "", ""),
+            ("hombres", "Int32", "", "", "", "", ""),
+            ("mujeres", "Int32", "", "", "", "", ""),
+            ("ipm_gt", "Float64", "", "", "", "", ""),
+            ("prog_fodes", "UInt8", "", "", "", "", ""),
+            ("prog_maga", "UInt8", "", "", "", "", ""),
+            ("prog_bono_social", "UInt8", "", "", "", "", ""),
+            ("estufa_mejorada", "UInt8", "", "", "", "", ""),
+            ("ecofiltro", "UInt8", "", "", "", "", ""),
+        ]
+        return MockQueryResult(
+            column_names=["name", "type", "default_type", "default_expression", "comment", "codec_expression", "ttl_expression"],
+            result_rows=columns,
+        )
 
     # ── Handlers ─────────────────────────────────────────────────────
 

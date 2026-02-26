@@ -21,7 +21,8 @@ def _seed_datasource(db_session, institution_id=None, code="QRY_DS"):
         code=code,
         name="Query Test DS",
         ch_table="rsh.test_table",
-        base_filter="prog_test = 1",
+        base_filter_columns=["prog_test"],
+        base_filter_logic="OR",
         institution_id=institution_id,
         is_active=True,
     )
@@ -279,3 +280,103 @@ class TestExecuteSavedQuery:
     def test_execute_nonexistent_saved_query_returns_404(self, authenticated_admin_client):
         resp = authenticated_admin_client.post(f"/api/v1/queries/saved/{uuid4()}/execute")
         assert resp.status_code == 404
+
+
+# ==================== Execute with GROUP BY ====================
+
+class TestExecuteGroupBy:
+    def test_execute_with_group_by(self, authenticated_admin_client, db_session, test_institution):
+        ds = _seed_datasource(db_session, institution_id=test_institution.id)
+        # Make departamento groupable
+        for col in ds.columns_def:
+            if col.column_name == "departamento":
+                col.is_groupable = True
+        db_session.commit()
+
+        mock_ch = _mock_ch_client(
+            count=2,
+            rows=[["Guatemala", 100], ["Escuintla", 50]],
+            col_names=["departamento", "count"],
+        )
+
+        def override_ch():
+            yield mock_ch
+
+        app.dependency_overrides[get_ch_client] = override_ch
+        try:
+            resp = authenticated_admin_client.post("/api/v1/queries/execute", json={
+                "datasource_id": str(ds.id),
+                "columns": ["departamento"],
+                "filters": [],
+                "group_by": ["departamento"],
+                "aggregations": [{"column": "*", "function": "COUNT"}],
+                "offset": 0,
+                "limit": 10,
+            })
+            assert resp.status_code == 200
+            data = resp.json()["data"]
+            assert data["total"] == 2
+            assert len(data["columns_meta"]) == 2
+            assert data["columns_meta"][1]["column_name"] == "count"
+        finally:
+            app.dependency_overrides.pop(get_ch_client, None)
+
+    def test_execute_non_groupable_column_returns_400(self, authenticated_admin_client, db_session, test_institution):
+        ds = _seed_datasource(db_session, institution_id=test_institution.id)
+        resp = authenticated_admin_client.post("/api/v1/queries/execute", json={
+            "datasource_id": str(ds.id),
+            "columns": ["hogar_id"],
+            "filters": [],
+            "group_by": ["hogar_id"],
+            "aggregations": [{"column": "*", "function": "COUNT"}],
+            "offset": 0,
+            "limit": 10,
+        })
+        assert resp.status_code == 400
+
+    def test_group_by_without_aggregations_returns_400(self, authenticated_admin_client, db_session, test_institution):
+        ds = _seed_datasource(db_session, institution_id=test_institution.id)
+        for col in ds.columns_def:
+            if col.column_name == "departamento":
+                col.is_groupable = True
+        db_session.commit()
+        resp = authenticated_admin_client.post("/api/v1/queries/execute", json={
+            "datasource_id": str(ds.id),
+            "columns": ["departamento"],
+            "filters": [],
+            "group_by": ["departamento"],
+            "aggregations": [],
+            "offset": 0,
+            "limit": 10,
+        })
+        assert resp.status_code == 400
+
+    def test_aggregations_without_group_by_returns_400(self, authenticated_admin_client, db_session, test_institution):
+        ds = _seed_datasource(db_session, institution_id=test_institution.id)
+        resp = authenticated_admin_client.post("/api/v1/queries/execute", json={
+            "datasource_id": str(ds.id),
+            "columns": ["departamento"],
+            "filters": [],
+            "group_by": [],
+            "aggregations": [{"column": "*", "function": "COUNT"}],
+            "offset": 0,
+            "limit": 10,
+        })
+        assert resp.status_code == 400
+
+    def test_invalid_aggregation_column_returns_400(self, authenticated_admin_client, db_session, test_institution):
+        ds = _seed_datasource(db_session, institution_id=test_institution.id)
+        for col in ds.columns_def:
+            if col.column_name == "departamento":
+                col.is_groupable = True
+        db_session.commit()
+        resp = authenticated_admin_client.post("/api/v1/queries/execute", json={
+            "datasource_id": str(ds.id),
+            "columns": ["departamento"],
+            "filters": [],
+            "group_by": ["departamento"],
+            "aggregations": [{"column": "*", "function": "COUNT"}, {"column": "no_existe", "function": "SUM"}],
+            "offset": 0,
+            "limit": 10,
+        })
+        assert resp.status_code == 400

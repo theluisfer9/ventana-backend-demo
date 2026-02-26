@@ -53,7 +53,8 @@ def seed():
                 code=code,
                 name=preset["name"],
                 ch_table=preset["table"],
-                base_filter=preset["base_filter"],
+                base_filter_columns=preset.get("base_filter_columns", []),
+                base_filter_logic=preset.get("base_filter_logic", "OR"),
                 institution_id=institution.id if institution else None,
             )
             db.add(ds)
