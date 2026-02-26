@@ -547,7 +547,8 @@ def seed():
                 name=meta["name"],
                 description=meta["description"],
                 ch_table=f"{ch_database}.{table_name}",
-                base_filter=None,
+                base_filter_columns=[],
+                base_filter_logic="OR",
                 institution_id=None,
                 is_active=True,
             )
