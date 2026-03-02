@@ -71,6 +71,7 @@ def seed():
             for order, col_name in enumerate(all_cols):
                 data_type, category = classify_column(col_name, intervention_cols)
                 is_filterable = col_name in preset["allowed_filters"] or col_name in intervention_cols
+                is_groupable = category in (ColumnCategory.DIMENSION, ColumnCategory.GEO)
                 dsc = DataSourceColumn(
                     datasource_id=ds.id,
                     column_name=col_name,
@@ -79,6 +80,7 @@ def seed():
                     category=category,
                     is_selectable=True,
                     is_filterable=is_filterable,
+                    is_groupable=is_groupable,
                     display_order=order,
                 )
                 db.add(dsc)
