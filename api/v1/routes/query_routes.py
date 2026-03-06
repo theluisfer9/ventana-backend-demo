@@ -17,10 +17,15 @@ from api.v1.auth.permissions import PermissionCode
 
 router = APIRouter(prefix="/queries", tags=["Query Builder"])
 
-# Permission guard: all query routes require at least one of these
+# Permission guard: read-only query routes (list, execute)
 _query_permission = RequireAnyPermission([
     PermissionCode.DATABASES_READ,
     PermissionCode.REPORTS_READ,
+])
+
+# Permission guard: create/edit/delete saved queries
+_query_write_permission = RequireAnyPermission([
+    PermissionCode.REPORTS_CREATE,
 ])
 
 
@@ -71,6 +76,10 @@ def _get_user_datasource(ds_id: UUID, user: User, db: Session) -> DataSource:
     if not ds:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="DataSource no encontrado")
     if not _is_admin(user):
+        # Allow access if datasource belongs to user's institution
+        if user.institution_id and ds.institution_id and user.institution_id == ds.institution_id:
+            return ds
+        # Otherwise check role-datasource mapping
         has_access = db.query(RoleDataSource).filter(
             RoleDataSource.role_id == user.role_id,
             RoleDataSource.datasource_id == ds.id,
@@ -80,11 +89,32 @@ def _get_user_datasource(ds_id: UUID, user: User, db: Session) -> DataSource:
     return ds
 
 
+def _is_institutional_admin(user: User) -> bool:
+    """Check if user has reports:create (admin institucional)."""
+    if not user.role:
+        return False
+    user_permissions = {p.code for p in user.role.permissions}
+    return PermissionCode.REPORTS_CREATE.value in user_permissions
+
+
+def _same_institution(sq: SavedQuery, user: User) -> bool:
+    """Check if saved query's datasource belongs to user's institution."""
+    if not user.institution_id:
+        return False
+    if sq.institution_id and sq.institution_id == user.institution_id:
+        return True
+    if sq.data_source and sq.data_source.institution_id == user.institution_id:
+        return True
+    return False
+
+
 def _can_access_saved_query(sq: SavedQuery, user: User) -> bool:
     """Check if user can access a saved query."""
     if _is_admin(user):
         return True
     if sq.user_id == user.id:
+        return True
+    if _same_institution(sq, user):
         return True
     if sq.is_shared and sq.institution_id and user.institution_id == sq.institution_id:
         return True
@@ -101,7 +131,15 @@ def list_available_datasources(
         accessible_ids = db.query(RoleDataSource.datasource_id).filter(
             RoleDataSource.role_id == current_user.role_id,
         ).subquery()
-        query = query.filter(DataSource.id.in_(accessible_ids))
+        if current_user.institution_id:
+            query = query.filter(
+                or_(
+                    DataSource.id.in_(accessible_ids),
+                    DataSource.institution_id == current_user.institution_id,
+                )
+            )
+        else:
+            query = query.filter(DataSource.id.in_(accessible_ids))
     sources = query.order_by(DataSource.name).all()
     return [
         {
@@ -168,7 +206,7 @@ def execute_adhoc_query(
 @router.post("/saved", status_code=status.HTTP_201_CREATED)
 def save_query(
     body: SavedQueryCreate,
-    current_user: User = Depends(_query_permission),
+    current_user: User = Depends(_query_write_permission),
     db: Session = Depends(get_sync_db_pg),
 ):
     ds = _get_user_datasource(body.datasource_id, current_user, db)
@@ -183,16 +221,29 @@ def save_query(
     if agg_dicts:
         validate_aggregations(agg_dicts, ds.columns_def)
 
-    # Only admins can share queries to institutions
+    # Admin o admin institucional pueden compartir consultas
     institution_id = None
     is_shared = False
     if body.is_shared and body.institution_id:
-        if not _is_admin(current_user):
+        if _is_admin(current_user):
+            institution_id = body.institution_id
+            is_shared = True
+        elif _is_institutional_admin(current_user) and current_user.institution_id:
+            if str(body.institution_id) != str(current_user.institution_id):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Solo puede compartir consultas dentro de su institucion",
+                )
+            institution_id = body.institution_id
+            is_shared = True
+        else:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Solo administradores pueden compartir consultas a instituciones",
+                detail="No tiene permiso para compartir consultas a instituciones",
             )
-        institution_id = body.institution_id
+    elif _is_institutional_admin(current_user) and current_user.institution_id:
+        # Auto-assign institution for institutional admins
+        institution_id = current_user.institution_id
         is_shared = True
 
     sq = SavedQuery(
@@ -311,7 +362,7 @@ def get_saved_query(
 def update_saved_query(
     query_id: UUID,
     body: SavedQueryUpdate,
-    current_user: User = Depends(_query_permission),
+    current_user: User = Depends(_query_write_permission),
     db: Session = Depends(get_sync_db_pg),
 ):
     """Actualizar una consulta guardada. Solo el creador o admin pueden editar."""
@@ -327,7 +378,12 @@ def update_saved_query(
     )
     if not sq:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Consulta no encontrada")
-    if sq.user_id != current_user.id and not _is_admin(current_user):
+    can_edit = (
+        _is_admin(current_user)
+        or sq.user_id == current_user.id
+        or (_is_institutional_admin(current_user) and _same_institution(sq, current_user))
+    )
+    if not can_edit:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tiene permiso para editar esta consulta")
 
     # Validar columnas, filtros, group_by y aggregations si se actualizan
@@ -352,12 +408,22 @@ def update_saved_query(
     if "aggregations" in update_data and body.aggregations is not None:
         update_data["aggregations"] = [a.model_dump() for a in body.aggregations]
 
-    # Solo admin puede compartir
+    # Solo admin o admin institucional (dentro de su institucion) puede compartir
     if "is_shared" in update_data or "institution_id" in update_data:
-        if not _is_admin(current_user):
+        if _is_admin(current_user):
+            pass  # super admin puede todo
+        elif _is_institutional_admin(current_user) and current_user.institution_id:
+            # Institutional admin solo puede compartir dentro de su institucion
+            target_inst = update_data.get("institution_id", sq.institution_id)
+            if target_inst and str(target_inst) != str(current_user.institution_id):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Solo puede compartir consultas dentro de su institucion",
+                )
+        else:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Solo administradores pueden compartir consultas a instituciones",
+                detail="No tiene permiso para compartir consultas a instituciones",
             )
 
     for key, value in update_data.items():
@@ -387,14 +453,23 @@ def update_saved_query(
 @router.delete("/saved/{query_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_saved_query(
     query_id: UUID,
-    current_user: User = Depends(_query_permission),
+    current_user: User = Depends(_query_write_permission),
     db: Session = Depends(get_sync_db_pg),
 ):
-    sq = db.query(SavedQuery).filter(SavedQuery.id == query_id).first()
+    sq = (
+        db.query(SavedQuery)
+        .options(joinedload(SavedQuery.data_source))
+        .filter(SavedQuery.id == query_id)
+        .first()
+    )
     if not sq:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Consulta no encontrada")
-    # Only the creator or admin can delete
-    if sq.user_id != current_user.id and not _is_admin(current_user):
+    can_delete = (
+        _is_admin(current_user)
+        or sq.user_id == current_user.id
+        or (_is_institutional_admin(current_user) and _same_institution(sq, current_user))
+    )
+    if not can_delete:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tiene permiso para eliminar esta consulta")
     db.delete(sq)
     db.commit()

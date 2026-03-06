@@ -18,23 +18,37 @@ from api.v1.services.institution import (
     delete_institution,
 )
 from api.v1.dependencies.permission_dependency import RequirePermission
+from api.v1.dependencies.auth_dependency import get_current_active_user
 from api.v1.auth.permissions import PermissionCode
 from api.v1.models.user import User
+from api.v1.models.institution import Institution
 
 router = APIRouter(prefix="/institutions", tags=["Instituciones"])
+
+
+def _is_admin(user: User) -> bool:
+    if not user.role:
+        return False
+    user_permissions = {p.code for p in user.role.permissions}
+    return PermissionCode.SYSTEM_CONFIG.value in user_permissions
 
 
 @router.get("/", response_model=List[InstitutionOut])
 def list_institutions(
     include_inactive: bool = False,
     db: Session = Depends(get_sync_db_pg),
-    current_user: User = Depends(RequirePermission(PermissionCode.USERS_READ)),
+    current_user: User = Depends(get_current_active_user),
 ):
     """
     Listar todas las instituciones.
-    Requiere permiso: users:read
+    Admin: todas. Usuarios: solo su institución.
     """
-    return get_all_institutions(db, include_inactive=include_inactive)
+    if _is_admin(current_user):
+        return get_all_institutions(db, include_inactive=include_inactive)
+    if current_user.institution_id:
+        inst = db.query(Institution).filter(Institution.id == current_user.institution_id).first()
+        return [inst] if inst else []
+    return []
 
 
 @router.post("/", response_model=InstitutionOut, status_code=status.HTTP_201_CREATED)
@@ -62,11 +76,11 @@ def create_new_institution(
 def get_institution(
     institution_id: UUID,
     db: Session = Depends(get_sync_db_pg),
-    current_user: User = Depends(RequirePermission(PermissionCode.USERS_READ)),
+    current_user: User = Depends(get_current_active_user),
 ):
     """
     Obtener una institución por ID.
-    Requiere permiso: users:read
+    Requiere: usuario autenticado
     """
     institution = get_institution_by_id(db, institution_id)
     if not institution:

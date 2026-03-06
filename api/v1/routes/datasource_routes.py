@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session, joinedload
 from api.v1.config.database import get_sync_db_pg, get_ch_client
 from api.v1.services.query_engine.engine import _safe_identifier
 from api.v1.dependencies.permission_dependency import RequirePermission
+from api.v1.dependencies.auth_dependency import get_current_active_user
 from api.v1.auth.permissions import PermissionCode
 from api.v1.models.user import User
 from api.v1.models.data_source import DataSource, DataSourceColumn, ColumnDataType, ColumnCategory
@@ -15,6 +16,13 @@ from api.v1.schemas.data_source import (
 router = APIRouter(prefix="/datasources", tags=["DataSources (Admin)"])
 
 
+def _is_admin(user: User) -> bool:
+    if not user.role:
+        return False
+    user_permissions = {p.code for p in user.role.permissions}
+    return PermissionCode.SYSTEM_CONFIG.value in user_permissions
+
+
 def _get_datasource(ds_id: UUID, db: Session) -> DataSource:
     ds = db.query(DataSource).options(joinedload(DataSource.columns_def)).filter(DataSource.id == ds_id).first()
     if not ds:
@@ -24,10 +32,16 @@ def _get_datasource(ds_id: UUID, db: Session) -> DataSource:
 
 @router.get("/", response_model=list[DataSourceListItem])
 def list_datasources(
-    current_user: User = Depends(RequirePermission(PermissionCode.DATASOURCES_MANAGE)),
+    current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_sync_db_pg),
 ):
-    sources = db.query(DataSource).options(joinedload(DataSource.columns_def)).order_by(DataSource.code).all()
+    query = db.query(DataSource).options(joinedload(DataSource.columns_def))
+    if not _is_admin(current_user):
+        if current_user.institution_id:
+            query = query.filter(DataSource.institution_id == current_user.institution_id)
+        else:
+            query = query.filter(DataSource.id == None)  # no institution, no access
+    sources = query.order_by(DataSource.code).all()
     return [
         DataSourceListItem(
             id=ds.id,
@@ -88,13 +102,130 @@ def list_ch_columns(
     return columns
 
 
-@router.get("/{ds_id}", response_model=DataSourceOut)
-def get_datasource(
+# ClickHouse type -> app ColumnDataType mapping
+_CH_TYPE_MAP = {
+    "String": ColumnDataType.TEXT,
+    "FixedString": ColumnDataType.TEXT,
+    "LowCardinality(String)": ColumnDataType.TEXT,
+    "Nullable(String)": ColumnDataType.TEXT,
+    "UUID": ColumnDataType.TEXT,
+    "Date": ColumnDataType.TEXT,
+    "DateTime": ColumnDataType.TEXT,
+    "UInt8": ColumnDataType.INTEGER,
+    "UInt16": ColumnDataType.INTEGER,
+    "UInt32": ColumnDataType.INTEGER,
+    "UInt64": ColumnDataType.INTEGER,
+    "Int8": ColumnDataType.INTEGER,
+    "Int16": ColumnDataType.INTEGER,
+    "Int32": ColumnDataType.INTEGER,
+    "Int64": ColumnDataType.INTEGER,
+    "Nullable(UInt8)": ColumnDataType.INTEGER,
+    "Nullable(UInt16)": ColumnDataType.INTEGER,
+    "Nullable(UInt32)": ColumnDataType.INTEGER,
+    "Nullable(UInt64)": ColumnDataType.INTEGER,
+    "Nullable(Int8)": ColumnDataType.INTEGER,
+    "Nullable(Int16)": ColumnDataType.INTEGER,
+    "Nullable(Int32)": ColumnDataType.INTEGER,
+    "Nullable(Int64)": ColumnDataType.INTEGER,
+    "Float32": ColumnDataType.FLOAT,
+    "Float64": ColumnDataType.FLOAT,
+    "Nullable(Float32)": ColumnDataType.FLOAT,
+    "Nullable(Float64)": ColumnDataType.FLOAT,
+    "Decimal": ColumnDataType.FLOAT,
+}
+
+
+def _map_ch_type(ch_type: str) -> ColumnDataType:
+    """Map a ClickHouse type string to ColumnDataType."""
+    if ch_type in _CH_TYPE_MAP:
+        return _CH_TYPE_MAP[ch_type]
+    lower = ch_type.lower()
+    if "int" in lower:
+        return ColumnDataType.INTEGER
+    if "float" in lower or "decimal" in lower:
+        return ColumnDataType.FLOAT
+    return ColumnDataType.TEXT
+
+
+def _guess_category(col_name: str, data_type: ColumnDataType) -> ColumnCategory:
+    """Guess column category from name and type."""
+    name_lower = col_name.lower()
+    geo_keywords = ["departamento", "municipio", "lugar_poblado", "codigo_dep", "codigo_mun", "latitud", "longitud"]
+    if any(kw in name_lower for kw in geo_keywords):
+        return ColumnCategory.GEO
+    intervention_keywords = ["bono", "beca", "programa", "intervencion", "beneficio"]
+    if any(kw in name_lower for kw in intervention_keywords):
+        return ColumnCategory.INTERVENTION
+    if data_type in (ColumnDataType.INTEGER, ColumnDataType.FLOAT) and not name_lower.endswith("_id"):
+        return ColumnCategory.MEASURE
+    return ColumnCategory.DIMENSION
+
+
+def _make_label(col_name: str) -> str:
+    """Convert column_name to a human-readable label."""
+    return col_name.replace("_", " ").title()
+
+
+@router.post("/{ds_id}/auto-discover", response_model=DataSourceOut)
+def auto_discover_columns(
     ds_id: UUID,
     current_user: User = Depends(RequirePermission(PermissionCode.DATASOURCES_MANAGE)),
     db: Session = Depends(get_sync_db_pg),
+    ch_client=Depends(get_ch_client),
+):
+    """Auto-discover columns from ClickHouse table and register them in the datasource."""
+    ds = _get_datasource(ds_id, db)
+
+    try:
+        safe_table = _safe_identifier(ds.ch_table)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Nombre de tabla no válido: {ds.ch_table!r}")
+
+    result = ch_client.query(f"DESCRIBE TABLE {safe_table}")
+
+    # Get existing column names to avoid duplicates
+    existing_names = {c.column_name for c in (ds.columns_def or [])}
+
+    new_count = 0
+    for i, row in enumerate(result.result_rows):
+        col_name = row[0]
+        ch_type = row[1]
+
+        if col_name in existing_names:
+            continue
+
+        data_type = _map_ch_type(ch_type)
+        category = _guess_category(col_name, data_type)
+
+        col = DataSourceColumn(
+            datasource_id=ds.id,
+            column_name=col_name,
+            label=_make_label(col_name),
+            data_type=data_type,
+            category=category,
+            is_selectable=True,
+            is_filterable=True,
+            is_groupable=(category in (ColumnCategory.DIMENSION, ColumnCategory.GEO, ColumnCategory.INTERVENTION)),
+            display_order=len(existing_names) + i,
+        )
+        db.add(col)
+        new_count += 1
+
+    db.commit()
+    db.refresh(ds)
+    return _datasource_to_out(ds)
+
+
+@router.get("/{ds_id}", response_model=DataSourceOut)
+def get_datasource(
+    ds_id: UUID,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_sync_db_pg),
 ):
     ds = _get_datasource(ds_id, db)
+    if not _is_admin(current_user):
+        if not (current_user.institution_id and ds.institution_id and current_user.institution_id == ds.institution_id):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tiene acceso a este DataSource")
     return _datasource_to_out(ds)
 
 
