@@ -244,6 +244,23 @@ class TestSavedQueries:
         })
         assert resp.status_code == 400
 
+    def test_save_shared_query_without_institution_returns_400(
+        self,
+        authenticated_admin_client,
+        db_session,
+        test_institution,
+    ):
+        ds = _seed_datasource(db_session, institution_id=test_institution.id)
+        resp = authenticated_admin_client.post("/api/v1/queries/saved", json={
+            "datasource_id": str(ds.id),
+            "name": "Shared Without Institution",
+            "selected_columns": ["hogar_id", "departamento"],
+            "filters": [],
+            "is_shared": True,
+            "institution_id": None,
+        })
+        assert resp.status_code == 400
+
 
 # ==================== Execute Saved Query ====================
 

@@ -116,6 +116,11 @@ def _normalize_saved_query_scope(
     """Normalize sharing fields to keep private queries private."""
     if _is_admin(current_user):
         if is_shared:
+            if not institution_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Las consultas compartidas requieren una institucion destino",
+                )
             return institution_id, True
         return None, False
 
