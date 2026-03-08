@@ -1,4 +1,3 @@
-from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
@@ -40,6 +39,14 @@ from api.v1.models import (
     DataSourceColumn,
     SavedQuery,
 )
+
+def _create_tables() -> None:
+    if sql_engine:
+        BaseSQL.metadata.create_all(bind=sql_engine)
+
+    if pg_sync_engine:
+        BasePG.metadata.create_all(bind=pg_sync_engine)
+
 
 app = FastAPI(
     title=APP_NAME,
@@ -89,12 +96,9 @@ app.include_router(dashboard_routes.router, prefix="/api/v1")
 app.include_router(ticket_routes.router, prefix="/api/v1")
 app.include_router(employee_routes.router, prefix="/api/v1")
 
-# Create tables
-if sql_engine:
-    BaseSQL.metadata.create_all(bind=sql_engine)
-
-if pg_sync_engine:
-    BasePG.metadata.create_all(bind=pg_sync_engine)
+@app.on_event("startup")
+def startup() -> None:
+    _create_tables()
 
 
 # Redirect / -> Swagger-UI documentation

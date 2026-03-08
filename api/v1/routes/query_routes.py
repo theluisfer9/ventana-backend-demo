@@ -108,13 +108,41 @@ def _same_institution(sq: SavedQuery, user: User) -> bool:
     return False
 
 
+def _normalize_saved_query_scope(
+    institution_id,
+    is_shared: bool,
+    current_user: User,
+):
+    """Normalize sharing fields to keep private queries private."""
+    if _is_admin(current_user):
+        if is_shared:
+            return institution_id, True
+        return None, False
+
+    if _is_institutional_admin(current_user) and current_user.institution_id:
+        if is_shared:
+            target_inst = institution_id or current_user.institution_id
+            if str(target_inst) != str(current_user.institution_id):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Solo puede compartir consultas dentro de su institucion",
+                )
+            return current_user.institution_id, True
+        return None, False
+
+    if is_shared or institution_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tiene permiso para compartir consultas a instituciones",
+        )
+    return None, False
+
+
 def _can_access_saved_query(sq: SavedQuery, user: User) -> bool:
     """Check if user can access a saved query."""
     if _is_admin(user):
         return True
     if sq.user_id == user.id:
-        return True
-    if _same_institution(sq, user):
         return True
     if sq.is_shared and sq.institution_id and user.institution_id == sq.institution_id:
         return True
@@ -221,30 +249,11 @@ def save_query(
     if agg_dicts:
         validate_aggregations(agg_dicts, ds.columns_def)
 
-    # Admin o admin institucional pueden compartir consultas
-    institution_id = None
-    is_shared = False
-    if body.is_shared and body.institution_id:
-        if _is_admin(current_user):
-            institution_id = body.institution_id
-            is_shared = True
-        elif _is_institutional_admin(current_user) and current_user.institution_id:
-            if str(body.institution_id) != str(current_user.institution_id):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Solo puede compartir consultas dentro de su institucion",
-                )
-            institution_id = body.institution_id
-            is_shared = True
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="No tiene permiso para compartir consultas a instituciones",
-            )
-    elif _is_institutional_admin(current_user) and current_user.institution_id:
-        # Auto-assign institution for institutional admins
-        institution_id = current_user.institution_id
-        is_shared = True
+    institution_id, is_shared = _normalize_saved_query_scope(
+        body.institution_id,
+        body.is_shared,
+        current_user,
+    )
 
     sq = SavedQuery(
         user_id=current_user.id,
@@ -410,21 +419,13 @@ def update_saved_query(
 
     # Solo admin o admin institucional (dentro de su institucion) puede compartir
     if "is_shared" in update_data or "institution_id" in update_data:
-        if _is_admin(current_user):
-            pass  # super admin puede todo
-        elif _is_institutional_admin(current_user) and current_user.institution_id:
-            # Institutional admin solo puede compartir dentro de su institucion
-            target_inst = update_data.get("institution_id", sq.institution_id)
-            if target_inst and str(target_inst) != str(current_user.institution_id):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Solo puede compartir consultas dentro de su institucion",
-                )
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="No tiene permiso para compartir consultas a instituciones",
-            )
+        normalized_institution_id, normalized_is_shared = _normalize_saved_query_scope(
+            update_data.get("institution_id", sq.institution_id),
+            update_data.get("is_shared", sq.is_shared or False),
+            current_user,
+        )
+        update_data["institution_id"] = normalized_institution_id
+        update_data["is_shared"] = normalized_is_shared
 
     for key, value in update_data.items():
         setattr(sq, key, value)

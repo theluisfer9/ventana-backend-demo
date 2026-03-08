@@ -231,11 +231,19 @@ class TestAnalystDeniedRoles:
 
 
 class TestAnalystDeniedInstitutions:
-    """Analyst NO puede acceder a endpoints de instituciones."""
+    """Analyst no puede administrar instituciones y solo puede ver la suya."""
 
-    def test_analyst_cannot_list_institutions(self, analyst_rbac_client):
+    def test_analyst_list_institutions_returns_only_own_institution(
+        self,
+        analyst_rbac_client,
+        rbac_institution,
+    ):
         response = analyst_rbac_client.get("/api/v1/institutions/")
-        assert response.status_code == 403
+        assert response.status_code == 200
+        body = response.json()
+        assert len(body["data"]) == 1
+        assert body["data"][0]["id"] == str(rbac_institution.id)
+        assert body["data"][0]["code"] == rbac_institution.code
 
     def test_analyst_cannot_create_institution(self, analyst_rbac_client):
         payload = {"code": "EVIL_INST", "name": "Evil Institution"}
