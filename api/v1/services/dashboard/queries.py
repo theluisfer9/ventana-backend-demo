@@ -87,16 +87,24 @@ def query_rsh_global_stats(client) -> dict:
     r = client.query("""
         SELECT
             count() as total_hogares,
-            sum(numero_personas) as total_personas,
             uniq(departamento_codigo) as deptos,
             uniq(municipio_codigo) as munis,
             uniq(lugarpoblado_codigo) as lugares,
             round(avg(ipm_gt), 4) as ipm_avg,
+            round(avg(pmt), 4) as pmt_avg,
+            round(avg(nbi), 4) as nbi_avg,
             sum(hombres) as total_hombres,
             sum(mujeres) as total_mujeres
         FROM rsh.vw_pobreza_hogars
     """)
     stats = dict(zip(r.column_names, r.result_rows[0]))
+
+    # Total personas distintas por CUI
+    r_personas = client.query("""
+        SELECT count(DISTINCT pd4_numero_documento_identificacion) as total_personas
+        FROM rsh.vw_beneficios_x_persona
+    """)
+    stats["total_personas"] = r_personas.result_rows[0][0]
 
     # Municipios finalizados vs en progreso
     r2 = client.query("""
@@ -150,13 +158,15 @@ def query_rsh_global_stats(client) -> dict:
     """)
     stats["inseguridad"] = [dict(zip(r5.column_names, row)) for row in r5.result_rows]
 
-    # Potenciales beneficiarios por institucion (usando programas)
+    # Potenciales beneficiarios por institucion (distinct personas por CUI)
     r6 = client.query("""
         SELECT
-            sumIf(1, prog_fodes = 1) as FODES,
-            sumIf(1, prog_maga = 1) as MAGA,
-            sumIf(1, prog_bono_social = 1 OR prog_bolsa_social = 1 OR prog_bono_unico = 1) as MIDES
-        FROM rsh.vw_beneficios_x_hogar
+            uniqIf(p.pd4_numero_documento_identificacion, h.prog_fodes = 1) as FODES,
+            uniqIf(p.pd4_numero_documento_identificacion, h.prog_maga = 1) as MAGA,
+            uniqIf(p.pd4_numero_documento_identificacion,
+                   h.prog_bono_social = 1 OR h.prog_bolsa_social = 1 OR h.prog_bono_unico = 1) as MIDES
+        FROM rsh.vw_beneficios_x_persona AS p
+        INNER JOIN rsh.vw_beneficios_x_hogar AS h ON p.hogar_id = h.hogar_id
     """)
     benef_row = dict(zip(r6.column_names, r6.result_rows[0]))
     stats["beneficiarios_por_institucion"] = benef_row
@@ -164,29 +174,48 @@ def query_rsh_global_stats(client) -> dict:
     return stats
 
 
-def query_rsh_institutional_stats(client, base_filter_columns: list[str], base_filter_logic: str = "OR") -> dict:
+def query_rsh_institutional_stats(client, base_filter_columns: list[str], base_filter_logic: str = "OR", intervention_columns: list[str] | None = None, departamento_codigo: str | None = None) -> dict:
     """Estadisticas RSH scoped a una institucion via base_filter_columns."""
     if not base_filter_columns:
         return {}
 
     conditions = [f"{col} = 1" for col in base_filter_columns]
     where = f" {base_filter_logic} ".join(conditions)
+    if len(conditions) > 1:
+        where = f"({where})"
+
+    # Filtro opcional por departamento
+    depto_filter = ""
+    depto_params = {}
+    if departamento_codigo:
+        depto_filter = " AND trim(ig3_codigo_departamento) = {depto:String}"
+        depto_params = {"depto": departamento_codigo}
 
     # Stats generales scoped
     r = client.query(f"""
         SELECT
             count() as total_hogares,
-            sum(personas) as total_personas,
             uniq(ig3_codigo_departamento) as deptos,
             uniq(ig4_codigo_municipio) as munis,
             uniq(ig6_codigo_del_lugar_poblado) as lugares,
             round(avg(ipm_gt), 4) as ipm_avg,
+            round(avg(pmt), 4) as pmt_avg,
+            round(avg(nbi), 4) as nbi_avg,
             sum(hombres) as total_hombres,
             sum(mujeres) as total_mujeres
         FROM rsh.vw_beneficios_x_hogar
-        WHERE {where}
-    """)
+        WHERE {where}{depto_filter}
+    """, parameters=depto_params)
     stats = dict(zip(r.column_names, r.result_rows[0]))
+
+    # Total personas distintas por CUI
+    r_personas = client.query(f"""
+        SELECT count(DISTINCT p.pd4_numero_documento_identificacion) as total_personas
+        FROM rsh.vw_beneficios_x_persona AS p
+        INNER JOIN rsh.vw_beneficios_x_hogar AS h ON p.hogar_id = h.hogar_id
+        WHERE {where}{depto_filter}
+    """, parameters=depto_params)
+    stats["total_personas"] = r_personas.result_rows[0][0]
 
     # Municipios estado - join con pobreza_hogars para fase_estado
     r2 = client.query(f"""
@@ -199,10 +228,10 @@ def query_rsh_institutional_stats(client, base_filter_columns: list[str], base_f
                 argMax(p.fase_estado, p.fecha) as ultimo_estado
             FROM rsh.vw_beneficios_x_hogar AS b
             INNER JOIN rsh.vw_pobreza_hogars AS p ON b.hogar_id = p.hogar_id
-            WHERE ({where}) AND p.fase_estado != ''
+            WHERE ({where}){depto_filter} AND p.fase_estado != ''
             GROUP BY municipio_codigo
         )
-    """)
+    """, parameters=depto_params)
     muni_stats = dict(zip(r2.column_names, r2.result_rows[0]))
     stats["municipios_finalizados"] = muni_stats.get("finalizados", 0)
     stats["municipios_en_progreso"] = muni_stats.get("en_progreso", 0)
@@ -211,13 +240,13 @@ def query_rsh_institutional_stats(client, base_filter_columns: list[str], base_f
     r3 = client.query(f"""
         SELECT ipm_gt_clasificacion, count() as cantidad
         FROM rsh.vw_beneficios_x_hogar
-        WHERE ({where}) AND ipm_gt_clasificacion != ''
+        WHERE ({where}){depto_filter} AND ipm_gt_clasificacion != ''
         GROUP BY ipm_gt_clasificacion
         ORDER BY cantidad DESC
-    """)
+    """, parameters=depto_params)
     stats["por_ipm"] = [dict(zip(r3.column_names, row)) for row in r3.result_rows]
 
-    # Por departamento
+    # Por departamento (siempre sin filtro de depto para que el front tenga la lista completa)
     r4 = client.query(f"""
         SELECT
             ig3_departamento as departamento,
@@ -237,10 +266,35 @@ def query_rsh_institutional_stats(client, base_filter_columns: list[str], base_f
             count() as cantidad
         FROM rsh.vw_beneficios_x_hogar AS b
         INNER JOIN rsh.vw_elcsa_hogar AS i ON b.hogar_id = i.hogar_id
-        WHERE ({where}) AND i.nivel_inseguridad_alimentaria != ''
+        WHERE ({where}){depto_filter} AND i.nivel_inseguridad_alimentaria != ''
         GROUP BY nivel
         ORDER BY cantidad DESC
-    """)
+    """, parameters=depto_params)
     stats["inseguridad"] = [dict(zip(r5.column_names, row)) for row in r5.result_rows]
+
+    # Bonos e intervenciones scoped (solo columnas de la institucion)
+    if intervention_columns:
+        sums = ", ".join(f"sum({col}) as {col}" for col in intervention_columns)
+        # Totales (con filtro de depto si aplica)
+        r6 = client.query(f"""
+            SELECT {sums}, sum(total_intervenciones) as total_intervenciones
+            FROM rsh.vw_beneficios_x_hogar
+            WHERE {where}{depto_filter}
+        """, parameters=depto_params)
+        stats["bonos"] = dict(zip(r6.column_names, r6.result_rows[0]))
+
+        # Bonos por departamento (con filtro de depto si aplica)
+        r7 = client.query(f"""
+            SELECT
+                ig3_departamento as departamento,
+                trim(ig3_codigo_departamento) as codigo,
+                {sums},
+                sum(total_intervenciones) as total_intervenciones
+            FROM rsh.vw_beneficios_x_hogar
+            WHERE {where}{depto_filter}
+            GROUP BY ig3_departamento, ig3_codigo_departamento
+            ORDER BY total_intervenciones DESC
+        """, parameters=depto_params)
+        stats["bonos_por_departamento"] = [dict(zip(r7.column_names, row)) for row in r7.result_rows]
 
     return stats

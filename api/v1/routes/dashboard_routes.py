@@ -33,8 +33,8 @@ def _is_admin(user: User) -> bool:
     return PermissionCode.SYSTEM_CONFIG.value in user_permissions
 
 
-def _get_user_base_filters(user: User, db: Session) -> tuple[list[str], str] | None:
-    """Get base_filter_columns for user's institution from their datasources."""
+def _get_user_base_filters(user: User, db: Session) -> tuple[list[str], str, list[str]] | None:
+    """Get base_filter_columns and intervention_columns for user's institution."""
     if not user.institution_id:
         return None
     ds = (
@@ -47,11 +47,17 @@ def _get_user_base_filters(user: User, db: Session) -> tuple[list[str], str] | N
     )
     if not ds or not ds.base_filter_columns:
         return None
-    return ds.base_filter_columns, ds.base_filter_logic or "OR"
+    # Buscar intervention_columns del preset institucional
+    from api.v1.config.institutional_presets import INSTITUTIONAL_PRESETS
+    institution = user.institution
+    preset = INSTITUTIONAL_PRESETS.get(institution.code, {}) if institution else {}
+    intervention_cols = preset.get("intervention_columns", [])
+    return ds.base_filter_columns, ds.base_filter_logic or "OR", intervention_cols
 
 
 @router.get("/")
 def get_dashboard(
+    departamento: str | None = None,
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_sync_db_pg),
     client=Depends(get_ch_client),
@@ -64,7 +70,7 @@ def get_dashboard(
     if _is_admin(current_user):
         return _build_admin_dashboard(db, client)
     else:
-        return _build_institutional_dashboard(current_user, db, client)
+        return _build_institutional_dashboard(current_user, db, client, departamento_codigo=departamento)
 
 
 def _build_admin_dashboard(db: Session, client) -> AdminDashboardStats:
@@ -110,6 +116,8 @@ def _build_admin_dashboard(db: Session, client) -> AdminDashboardStats:
         municipios_en_progreso=rsh.get("municipios_en_progreso", 0),
         # Pobreza
         promedio_ipm=float(rsh.get("ipm_avg", 0) or 0),
+        promedio_pmt=float(rsh.get("pmt_avg", 0) or 0),
+        promedio_nbi=float(rsh.get("nbi_avg", 0) or 0),
         por_ipm_clasificacion=[
             ClasificacionCount(clasificacion=r["ipm_gt_clasificacion"], cantidad=r["cantidad"])
             for r in rsh.get("por_ipm", [])
@@ -132,7 +140,7 @@ def _build_admin_dashboard(db: Session, client) -> AdminDashboardStats:
     )
 
 
-def _build_institutional_dashboard(user: User, db: Session, client) -> InstitutionalDashboardStats:
+def _build_institutional_dashboard(user: User, db: Session, client, departamento_codigo: str | None = None) -> InstitutionalDashboardStats:
     """Dashboard para Admin Institucional o Usuario Institucional."""
     institution = user.institution
     inst_name = institution.name if institution else ""
@@ -144,7 +152,11 @@ def _build_institutional_dashboard(user: User, db: Session, client) -> Instituti
     # Stats RSH scoped
     base_filters = _get_user_base_filters(user, db)
     if base_filters:
-        rsh = query_rsh_institutional_stats(client, base_filters[0], base_filters[1])
+        rsh = query_rsh_institutional_stats(
+            client, base_filters[0], base_filters[1],
+            intervention_columns=base_filters[2],
+            departamento_codigo=departamento_codigo,
+        )
     else:
         rsh = {}
 
@@ -162,6 +174,8 @@ def _build_institutional_dashboard(user: User, db: Session, client) -> Instituti
         municipios_en_progreso=rsh.get("municipios_en_progreso", 0),
         # Pobreza
         promedio_ipm=float(rsh.get("ipm_avg", 0) or 0),
+        promedio_pmt=float(rsh.get("pmt_avg", 0) or 0),
+        promedio_nbi=float(rsh.get("nbi_avg", 0) or 0),
         por_ipm_clasificacion=[
             ClasificacionCount(clasificacion=r["ipm_gt_clasificacion"], cantidad=r["cantidad"])
             for r in rsh.get("por_ipm", [])
@@ -181,6 +195,9 @@ def _build_institutional_dashboard(user: User, db: Session, client) -> Instituti
             InseguridadCount(nivel=i["nivel"], cantidad=i["cantidad"])
             for i in rsh.get("inseguridad", [])
         ],
+        # Bonos e intervenciones
+        bonos=rsh.get("bonos", {}),
+        bonos_por_departamento=rsh.get("bonos_por_departamento", []),
         # PG stats
         total_consultas=pg_stats.get("total_consultas", 0),
         total_fuentes_datos=pg_stats.get("total_fuentes_datos", 0),

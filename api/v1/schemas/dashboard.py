@@ -60,8 +60,10 @@ class AdminDashboardStats(BaseModel):
     municipios_finalizados: int = 0
     municipios_en_progreso: int = 0
 
-    # Pobreza / IPM
+    # Pobreza / IPM / PMT / NBI
     promedio_ipm: float = 0.0
+    promedio_pmt: float = 0.0
+    promedio_nbi: float = 0.0
     por_ipm_clasificacion: list[ClasificacionCount] = []
 
     # Sexo beneficiarios
@@ -92,8 +94,10 @@ class InstitutionalDashboardStats(BaseModel):
     municipios_finalizados: int = 0
     municipios_en_progreso: int = 0
 
-    # Pobreza / IPM
+    # Pobreza / IPM / PMT / NBI
     promedio_ipm: float = 0.0
+    promedio_pmt: float = 0.0
+    promedio_nbi: float = 0.0
     por_ipm_clasificacion: list[ClasificacionCount] = []
 
     # Sexo beneficiarios
@@ -104,6 +108,10 @@ class InstitutionalDashboardStats(BaseModel):
 
     # Inseguridad alimentaria
     inseguridad_alimentaria: list[InseguridadCount] = []
+
+    # Bonos e intervenciones (solo las de la institucion)
+    bonos: dict[str, int] = {}
+    bonos_por_departamento: list[dict] = []
 
     # Consultas de la institucion
     total_consultas: int = 0
