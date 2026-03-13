@@ -11,6 +11,7 @@ from api.v1.schemas.dashboard import (
     InstitutionalDashboardStats,
     DepartamentoCount,
     ClasificacionCount,
+    PobrezaDepartamentoItem,
     InseguridadCount,
     SexoCount,
     InstitutionUsersCount,
@@ -68,9 +69,9 @@ def get_dashboard(
     - Admin/Usuario Institucional: datos scoped a su institucion
     """
     if _is_admin(current_user):
-        return _build_admin_dashboard(db, client)
+        return _build_admin_dashboard(db, client).model_dump()
     else:
-        return _build_institutional_dashboard(current_user, db, client, departamento_codigo=departamento)
+        return _build_institutional_dashboard(current_user, db, client, departamento_codigo=departamento).model_dump()
 
 
 def _build_admin_dashboard(db: Session, client) -> AdminDashboardStats:
@@ -121,6 +122,24 @@ def _build_admin_dashboard(db: Session, client) -> AdminDashboardStats:
         por_ipm_clasificacion=[
             ClasificacionCount(clasificacion=r["ipm_gt_clasificacion"], cantidad=r["cantidad"])
             for r in rsh.get("por_ipm", [])
+        ],
+        por_nbi_clasificacion=[
+            ClasificacionCount(clasificacion=r["clasificacion"], cantidad=r["cantidad"])
+            for r in rsh.get("por_nbi", [])
+        ],
+        por_pmt_clasificacion=[
+            ClasificacionCount(clasificacion=r["clasificacion"], cantidad=r["cantidad"])
+            for r in rsh.get("por_pmt", [])
+        ],
+        # Pobreza por departamento
+        ipm_por_departamento=[
+            PobrezaDepartamentoItem(**d) for d in rsh.get("ipm_por_departamento", [])
+        ],
+        pmt_por_departamento=[
+            PobrezaDepartamentoItem(**d) for d in rsh.get("pmt_por_departamento", [])
+        ],
+        nbi_por_departamento=[
+            PobrezaDepartamentoItem(**d) for d in rsh.get("nbi_por_departamento", [])
         ],
         # Sexo
         personas_por_sexo=[
@@ -179,6 +198,24 @@ def _build_institutional_dashboard(user: User, db: Session, client, departamento
         por_ipm_clasificacion=[
             ClasificacionCount(clasificacion=r["ipm_gt_clasificacion"], cantidad=r["cantidad"])
             for r in rsh.get("por_ipm", [])
+        ],
+        por_nbi_clasificacion=[
+            ClasificacionCount(clasificacion=r["clasificacion"], cantidad=r["cantidad"])
+            for r in rsh.get("por_nbi", [])
+        ],
+        por_pmt_clasificacion=[
+            ClasificacionCount(clasificacion=r["clasificacion"], cantidad=r["cantidad"])
+            for r in rsh.get("por_pmt", [])
+        ],
+        # Pobreza por departamento
+        ipm_por_departamento=[
+            PobrezaDepartamentoItem(**d) for d in rsh.get("ipm_por_departamento", [])
+        ],
+        pmt_por_departamento=[
+            PobrezaDepartamentoItem(**d) for d in rsh.get("pmt_por_departamento", [])
+        ],
+        nbi_por_departamento=[
+            PobrezaDepartamentoItem(**d) for d in rsh.get("nbi_por_departamento", [])
         ],
         # Sexo
         personas_por_sexo=[

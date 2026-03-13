@@ -98,6 +98,9 @@ class BeneficiarioFilters(BaseModel):
     anio: Optional[int] = None
     # Fase intervencion
     fase: Optional[str] = None
+    # Municipios con cambios recientes
+    solo_recientes: Optional[bool] = None
+    municipios_recientes_codigos: Optional[str] = None
 
 
 # ── Beneficiario resumen (para listados) ──────────────────────────────

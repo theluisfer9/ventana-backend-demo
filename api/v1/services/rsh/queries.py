@@ -25,6 +25,19 @@ def build_filters(**kwargs) -> tuple[str, dict, set[str]]:
         conditions.append("trim(p.municipio_codigo) = {muni:String}")
         params["muni"] = str(municipio).strip()
 
+    if kwargs.get("solo_recientes"):
+        raw_codes = kwargs.get("municipios_recientes_codigos") or ""
+        recent_codes = [
+            code.strip()
+            for code in str(raw_codes).split(",")
+            if code.strip()
+        ]
+        if recent_codes:
+            conditions.append("has({municipios_recientes:Array(String)}, trim(p.municipio_codigo))")
+            params["municipios_recientes"] = recent_codes
+        else:
+            conditions.append("1 = 0")
+
     if lugar_poblado := kwargs.get("lugar_poblado_codigo"):
         conditions.append("trim(p.lugarpoblado_codigo) = {lugar:String}")
         params["lugar"] = str(lugar_poblado).strip()

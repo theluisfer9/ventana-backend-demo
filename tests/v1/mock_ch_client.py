@@ -214,6 +214,13 @@ class MockClickHouseClient:
             filtered = [h for h in filtered if h["departamento_codigo"].strip() == params["depto"]]
         if "muni" in params:
             filtered = [h for h in filtered if h["municipio_codigo"].strip() == params["muni"]]
+        if "municipios_recientes" in params:
+            recent_codes = {
+                str(code).strip()
+                for code in params["municipios_recientes"]
+                if str(code).strip()
+            }
+            filtered = [h for h in filtered if h["municipio_codigo"].strip() in recent_codes]
         if "lugar" in params:
             filtered = [h for h in filtered if h["lugarpoblado_codigo"].strip() == params["lugar"]]
         if "area" in params:

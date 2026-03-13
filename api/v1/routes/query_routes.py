@@ -1,5 +1,8 @@
 from uuid import UUID
+from datetime import datetime
+from enum import Enum
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from starlette.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_
 from api.v1.config.database import get_sync_db_pg, get_ch_client
@@ -13,7 +16,18 @@ from api.v1.schemas.query_builder import (
 )
 from api.v1.services.query_engine.validators import validate_columns, validate_filters, validate_group_by, validate_aggregations
 from api.v1.services.query_engine.engine import execute_query
+from api.v1.services.query_engine.export import (
+    generate_csv_streaming as gen_query_csv_stream,
+    generate_excel as gen_query_excel,
+    generate_pdf as gen_query_pdf,
+)
 from api.v1.auth.permissions import PermissionCode
+
+
+class ExportFormat(str, Enum):
+    csv = "csv"
+    excel = "excel"
+    pdf = "pdf"
 
 router = APIRouter(prefix="/queries", tags=["Query Builder"])
 
@@ -236,6 +250,75 @@ def execute_adhoc_query(
     )
 
 
+_MEDIA_TYPES = {
+    "csv": "text/csv; charset=utf-8",
+    "excel": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "pdf": "application/pdf",
+}
+_EXTENSIONS = {"csv": "csv", "excel": "xlsx", "pdf": "pdf"}
+
+
+@router.post("/execute/export")
+def export_adhoc_query(
+    body: QueryExecuteRequest,
+    formato: ExportFormat = Query(..., description="Formato de exportacion: csv, excel, pdf"),
+    current_user: User = Depends(_query_permission),
+    db: Session = Depends(get_sync_db_pg),
+    client=Depends(get_ch_client),
+):
+    """Ejecutar una consulta ad-hoc y descargar el resultado como CSV, Excel o PDF."""
+    ds = _get_user_datasource(body.datasource_id, current_user, db)
+    validated_cols = validate_columns(body.columns, ds.columns_def)
+    filters_dicts = [f.model_dump() for f in body.filters]
+    validate_filters(filters_dicts, ds.columns_def)
+
+    group_by_names = body.group_by or []
+    agg_dicts = [a.model_dump() for a in body.aggregations] if body.aggregations else []
+    if bool(group_by_names) != bool(agg_dicts):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="group_by y aggregations deben proporcionarse juntos",
+        )
+    if group_by_names:
+        validate_group_by(group_by_names, ds.columns_def)
+    if agg_dicts:
+        validate_aggregations(agg_dicts, ds.columns_def)
+
+    rows, _ = execute_query(
+        client, ds, validated_cols, filters_dicts, 0, 2_000_000_000,
+        group_by=group_by_names or None,
+        aggregations=agg_dicts or None,
+    )
+
+    columns_meta = [
+        {"column_name": c.column_name, "label": c.label, "data_type": c.data_type}
+        for c in _build_columns_meta(group_by_names or None, agg_dicts or None, ds.columns_def, validated_cols)
+    ]
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ext = _EXTENSIONS[formato.value]
+    filename = f"consulta_{ts}.{ext}"
+    disposition = f'attachment; filename="{filename}"'
+
+    if formato == ExportFormat.csv:
+        return StreamingResponse(
+            gen_query_csv_stream(rows, columns_meta),
+            media_type=_MEDIA_TYPES["csv"],
+            headers={"Content-Disposition": disposition},
+        )
+
+    if formato == ExportFormat.excel:
+        buf = gen_query_excel(rows, columns_meta, title="Consulta")
+    else:
+        buf = gen_query_pdf(rows, columns_meta, title="Consulta")
+
+    return StreamingResponse(
+        buf,
+        media_type=_MEDIA_TYPES[formato.value],
+        headers={"Content-Disposition": disposition},
+    )
+
+
 @router.post("/saved", status_code=status.HTTP_201_CREATED)
 def save_query(
     body: SavedQueryCreate,
@@ -248,6 +331,11 @@ def save_query(
     validate_filters(filters_dicts, ds.columns_def)
 
     # Validate group_by and aggregations on save too
+    if bool(body.group_by) != bool(body.aggregations):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="group_by y aggregations deben proporcionarse juntos",
+        )
     if body.group_by:
         validate_group_by(body.group_by, ds.columns_def)
     agg_dicts = [a.model_dump() for a in body.aggregations] if body.aggregations else []
@@ -408,11 +496,21 @@ def update_saved_query(
         if body.filters is not None:
             filters_dicts = [f.model_dump() for f in body.filters]
             validate_filters(filters_dicts, ds.columns_def)
-        if body.group_by is not None and body.group_by:
-            validate_group_by(body.group_by, ds.columns_def)
-        if body.aggregations is not None and body.aggregations:
-            agg_dicts = [a.model_dump() for a in body.aggregations]
-            validate_aggregations(agg_dicts, ds.columns_def)
+        next_group_by = body.group_by if body.group_by is not None else (sq.group_by or [])
+        next_aggregations = (
+            [a.model_dump() for a in body.aggregations]
+            if body.aggregations is not None
+            else (sq.aggregations or [])
+        )
+        if bool(next_group_by) != bool(next_aggregations):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="group_by y aggregations deben proporcionarse juntos",
+            )
+        if next_group_by:
+            validate_group_by(next_group_by, ds.columns_def)
+        if next_aggregations:
+            validate_aggregations(next_aggregations, ds.columns_def)
 
     # Aplicar cambios
     update_data = body.model_dump(exclude_unset=True)
@@ -513,4 +611,66 @@ def execute_saved_query(
 
     return QueryExecuteResponse(
         items=rows, total=total, offset=offset, limit=limit, columns_meta=columns_meta,
+    )
+
+
+# ── Export de consultas guardadas ────────────────────────────────────
+
+
+@router.get("/saved/{query_id}/export")
+def export_saved_query(
+    query_id: UUID,
+    formato: ExportFormat = Query(..., description="Formato de exportacion: csv, excel, pdf"),
+    current_user: User = Depends(_query_permission),
+    db: Session = Depends(get_sync_db_pg),
+    client=Depends(get_ch_client),
+):
+    """Exportar una consulta guardada a CSV, Excel o PDF."""
+    sq = (
+        db.query(SavedQuery)
+        .options(joinedload(SavedQuery.data_source))
+        .filter(SavedQuery.id == query_id)
+        .first()
+    )
+    if not sq or not _can_access_saved_query(sq, current_user):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Consulta no encontrada")
+
+    ds = _get_user_datasource(sq.datasource_id, current_user, db)
+    validated_cols = validate_columns(sq.selected_columns, ds.columns_def)
+    validate_filters(sq.filters or [], ds.columns_def)
+
+    rows, _ = execute_query(
+        client, ds, validated_cols, sq.filters or [], 0, 2_000_000_000,
+        group_by=sq.group_by or None,
+        aggregations=sq.aggregations or None,
+    )
+
+    columns_meta = [
+        {"column_name": c.column_name, "label": c.label, "data_type": c.data_type}
+        for c in _build_columns_meta(sq.group_by or None, sq.aggregations or None, ds.columns_def, validated_cols)
+    ]
+
+    title = sq.name or "Consulta"
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ext = _EXTENSIONS[formato.value]
+    safe_name = "".join(c if c.isalnum() or c in "_- " else "_" for c in title).strip()[:50]
+    filename = f"{safe_name}_{ts}.{ext}"
+    disposition = f'attachment; filename="{filename}"'
+
+    if formato == ExportFormat.csv:
+        return StreamingResponse(
+            gen_query_csv_stream(rows, columns_meta),
+            media_type=_MEDIA_TYPES["csv"],
+            headers={"Content-Disposition": disposition},
+        )
+
+    if formato == ExportFormat.excel:
+        buf = gen_query_excel(rows, columns_meta, title=title)
+    else:
+        buf = gen_query_pdf(rows, columns_meta, title=title)
+
+    return StreamingResponse(
+        buf,
+        media_type=_MEDIA_TYPES[formato.value],
+        headers={"Content-Disposition": disposition},
     )

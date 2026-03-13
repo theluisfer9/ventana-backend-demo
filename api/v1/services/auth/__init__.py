@@ -46,12 +46,6 @@ def create_user_session(
     """
     Create a new session for a user and return tokens.
     """
-    # Create access token
-    access_token, access_jti, access_expires = create_access_token(
-        user_id=str(user.id),
-        role_code=user.role.code if user.role else None,
-    )
-
     # Create refresh token
     refresh_token, refresh_jti, refresh_expires = create_refresh_token(
         user_id=str(user.id)
@@ -66,6 +60,14 @@ def create_user_session(
         expires_at=refresh_expires,
     )
     db.add(session)
+
+    # Bind the access token to the persisted session so logout/revocation can
+    # invalidate still-unexpired access tokens.
+    access_token, access_jti, access_expires = create_access_token(
+        user_id=str(user.id),
+        role_code=user.role.code if user.role else None,
+        additional_claims={"sid": refresh_jti},
+    )
 
     # Update last login
     user.last_login = datetime.now(timezone.utc)

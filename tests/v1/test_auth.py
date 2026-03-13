@@ -371,6 +371,21 @@ class TestAuthRoutes:
         message = json_data.get("data", json_data).get("message", json_data.get("message", ""))
         assert "sesión cerrada" in message.lower()
 
+    def test_logout_revokes_current_access_token(self, client, test_admin_user):
+        """The current access token should stop working immediately after logout."""
+        login_response = client.post("/api/v1/auth/login", json={
+            "email": "admin@test.com",
+            "password": "Admin123!",
+        })
+        assert login_response.status_code == 200
+
+        access_token = login_response.json()["data"]["access_token"]
+        headers = {"Authorization": f"Bearer {access_token}"}
+
+        assert client.get("/api/v1/auth/me", headers=headers).status_code == 200
+        assert client.post("/api/v1/auth/logout", headers=headers).status_code == 200
+        assert client.get("/api/v1/auth/me", headers=headers).status_code == 401
+
     def test_get_profile_success(self, authenticated_admin_client, test_admin_user):
         """Test getting current user profile"""
         response = authenticated_admin_client.get("/api/v1/auth/me")
@@ -449,6 +464,25 @@ class TestAuthRoutes:
         json_data = response.json()
         detail = json_data.get("detail", json_data.get("message", ""))
         assert "incorrecta" in detail.lower()
+
+    def test_change_password_revokes_current_access_token(self, client, test_regular_user):
+        """Changing password should revoke the current access token too."""
+        login_response = client.post("/api/v1/auth/login", json={
+            "email": "user@test.com",
+            "password": "User123!",
+        })
+        assert login_response.status_code == 200
+
+        access_token = login_response.json()["data"]["access_token"]
+        headers = {"Authorization": f"Bearer {access_token}"}
+
+        response = client.put("/api/v1/auth/me/password", json={
+            "current_password": "User123!",
+            "new_password": "NewSecurePassword123!",
+        }, headers=headers)
+
+        assert response.status_code == 200
+        assert client.get("/api/v1/auth/me", headers=headers).status_code == 401
 
 
 # ==================== Session Management Tests ====================

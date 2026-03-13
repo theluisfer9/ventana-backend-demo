@@ -15,6 +15,13 @@ class ClasificacionCount(BaseModel):
     cantidad: int
 
 
+class PobrezaDepartamentoItem(BaseModel):
+    departamento: str
+    codigo: str
+    clasificacion: str
+    cantidad: int
+
+
 class InseguridadCount(BaseModel):
     nivel: str
     cantidad: int
@@ -65,6 +72,13 @@ class AdminDashboardStats(BaseModel):
     promedio_pmt: float = 0.0
     promedio_nbi: float = 0.0
     por_ipm_clasificacion: list[ClasificacionCount] = []
+    por_nbi_clasificacion: list[ClasificacionCount] = []
+    por_pmt_clasificacion: list[ClasificacionCount] = []
+
+    # Pobreza por departamento
+    ipm_por_departamento: list[PobrezaDepartamentoItem] = []
+    pmt_por_departamento: list[PobrezaDepartamentoItem] = []
+    nbi_por_departamento: list[PobrezaDepartamentoItem] = []
 
     # Sexo beneficiarios
     personas_por_sexo: list[SexoCount] = []
@@ -99,6 +113,13 @@ class InstitutionalDashboardStats(BaseModel):
     promedio_pmt: float = 0.0
     promedio_nbi: float = 0.0
     por_ipm_clasificacion: list[ClasificacionCount] = []
+    por_nbi_clasificacion: list[ClasificacionCount] = []
+    por_pmt_clasificacion: list[ClasificacionCount] = []
+
+    # Pobreza por departamento
+    ipm_por_departamento: list[PobrezaDepartamentoItem] = []
+    pmt_por_departamento: list[PobrezaDepartamentoItem] = []
+    nbi_por_departamento: list[PobrezaDepartamentoItem] = []
 
     # Sexo beneficiarios
     personas_por_sexo: list[SexoCount] = []

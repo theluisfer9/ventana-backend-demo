@@ -8,6 +8,11 @@ def validate_columns(
     check_selectable: bool = True,
 ) -> list[DataSourceColumn]:
     """Validate requested columns exist and are selectable. Returns matched DataSourceColumn objects."""
+    if not requested:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Debe seleccionar al menos una columna",
+        )
     col_map = {c.column_name: c for c in available}
     validated = []
     for col_name in requested:

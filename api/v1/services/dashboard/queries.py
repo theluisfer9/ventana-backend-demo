@@ -134,6 +134,45 @@ def query_rsh_global_stats(client) -> dict:
     """)
     stats["por_ipm"] = [dict(zip(r3.column_names, row)) for row in r3.result_rows]
 
+    # Distribucion NBI
+    r3b = client.query("""
+        SELECT nbi_clasificacion as clasificacion, count() as cantidad
+        FROM rsh.vw_pobreza_hogars
+        WHERE nbi_clasificacion != ''
+        GROUP BY nbi_clasificacion
+        ORDER BY cantidad DESC
+    """)
+    stats["por_nbi"] = [dict(zip(r3b.column_names, row)) for row in r3b.result_rows]
+
+    # Distribucion PMT
+    r3c = client.query("""
+        SELECT pmt_clasificacion as clasificacion, count() as cantidad
+        FROM rsh.vw_pobreza_hogars
+        WHERE pmt_clasificacion != ''
+        GROUP BY pmt_clasificacion
+        ORDER BY cantidad DESC
+    """)
+    stats["por_pmt"] = [dict(zip(r3c.column_names, row)) for row in r3c.result_rows]
+
+    # Pobreza por departamento (IPM / PMT / NBI) — una query por indice
+    for field, key in [
+        ("ipm_gt_clasificacion", "ipm_por_departamento"),
+        ("pmt_clasificacion", "pmt_por_departamento"),
+        ("nbi_clasificacion", "nbi_por_departamento"),
+    ]:
+        rp = client.query(f"""
+            SELECT
+                departamento,
+                trim(departamento_codigo) as codigo,
+                {field} as clasificacion,
+                count() as cantidad
+            FROM rsh.vw_pobreza_hogars
+            WHERE {field} != ''
+            GROUP BY departamento, departamento_codigo, {field}
+            ORDER BY departamento, cantidad DESC
+        """)
+        stats[key] = [dict(zip(rp.column_names, row)) for row in rp.result_rows]
+
     # Por departamento
     r4 = client.query("""
         SELECT
@@ -245,6 +284,45 @@ def query_rsh_institutional_stats(client, base_filter_columns: list[str], base_f
         ORDER BY cantidad DESC
     """, parameters=depto_params)
     stats["por_ipm"] = [dict(zip(r3.column_names, row)) for row in r3.result_rows]
+
+    # NBI clasificacion
+    r3b = client.query(f"""
+        SELECT nbi_clasificacion as clasificacion, count() as cantidad
+        FROM rsh.vw_beneficios_x_hogar
+        WHERE ({where}){depto_filter} AND nbi_clasificacion != ''
+        GROUP BY nbi_clasificacion
+        ORDER BY cantidad DESC
+    """, parameters=depto_params)
+    stats["por_nbi"] = [dict(zip(r3b.column_names, row)) for row in r3b.result_rows]
+
+    # PMT clasificacion
+    r3c = client.query(f"""
+        SELECT pmt_clasificacion as clasificacion, count() as cantidad
+        FROM rsh.vw_beneficios_x_hogar
+        WHERE ({where}){depto_filter} AND pmt_clasificacion != ''
+        GROUP BY pmt_clasificacion
+        ORDER BY cantidad DESC
+    """, parameters=depto_params)
+    stats["por_pmt"] = [dict(zip(r3c.column_names, row)) for row in r3c.result_rows]
+
+    # Pobreza por departamento (IPM / PMT / NBI) scoped
+    for field, key in [
+        ("ipm_gt_clasificacion", "ipm_por_departamento"),
+        ("pmt_clasificacion", "pmt_por_departamento"),
+        ("nbi_clasificacion", "nbi_por_departamento"),
+    ]:
+        rp = client.query(f"""
+            SELECT
+                ig3_departamento as departamento,
+                trim(ig3_codigo_departamento) as codigo,
+                {field} as clasificacion,
+                count() as cantidad
+            FROM rsh.vw_beneficios_x_hogar
+            WHERE ({where}){depto_filter} AND {field} != ''
+            GROUP BY ig3_departamento, ig3_codigo_departamento, {field}
+            ORDER BY departamento, cantidad DESC
+        """, parameters=depto_params)
+        stats[key] = [dict(zip(rp.column_names, row)) for row in rp.result_rows]
 
     # Por departamento (siempre sin filtro de depto para que el front tenga la lista completa)
     r4 = client.query(f"""

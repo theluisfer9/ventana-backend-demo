@@ -218,6 +218,24 @@ class TestLista:
         for item in data["items"]:
             assert item["departamento_codigo"] == depto
 
+    def test_lista_con_filtro_solo_recientes(self, authenticated_ch_client, mock_ch):
+        recent_codes = sorted({
+            mock_ch.dataset.hogares[0]["municipio_codigo"].strip(),
+            mock_ch.dataset.hogares[1]["municipio_codigo"].strip(),
+        })
+        resp = authenticated_ch_client.get(
+            f"{BASE}/",
+            params={
+                "solo_recientes": True,
+                "municipios_recientes_codigos": ",".join(recent_codes),
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["total"] > 0
+        for item in data["items"]:
+            assert item["municipio_codigo"] in recent_codes
+
     def test_lista_item_schema(self, authenticated_ch_client, mock_ch):
         resp = authenticated_ch_client.get(
             f"{BASE}/",

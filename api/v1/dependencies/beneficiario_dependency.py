@@ -35,6 +35,8 @@ def beneficiario_filters_dep(
     buscar: Annotated[Optional[str], Query(description="Buscar por nombre o CUI")] = None,
     anio: Annotated[Optional[int], Query(description="Anio de captura")] = None,
     fase: Annotated[Optional[str], Query(description="Fase de intervencion")] = None,
+    solo_recientes: Annotated[Optional[bool], Query(description="Filtrar solo municipios con cambios recientes")] = None,
+    municipios_recientes_codigos: Annotated[Optional[str], Query(description="CSV de codigos de municipios recientes")] = None,
 ) -> BeneficiarioFilters:
     return BeneficiarioFilters(
         departamento_codigo=departamento_codigo,
@@ -66,4 +68,6 @@ def beneficiario_filters_dep(
         buscar=buscar,
         anio=anio,
         fase=fase,
+        solo_recientes=solo_recientes,
+        municipios_recientes_codigos=municipios_recientes_codigos,
     )

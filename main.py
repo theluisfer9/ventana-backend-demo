@@ -42,11 +42,15 @@ from api.v1.models import (
 )
 
 def _create_tables() -> None:
-    if sql_engine:
-        BaseSQL.metadata.create_all(bind=sql_engine)
+    try:
+        if sql_engine:
+            BaseSQL.metadata.create_all(bind=sql_engine)
 
-    if pg_sync_engine:
-        BasePG.metadata.create_all(bind=pg_sync_engine)
+        if pg_sync_engine:
+            BasePG.metadata.create_all(bind=pg_sync_engine)
+    except Exception as e:
+        import logging
+        logging.warning(f"create_all skipped (tables may already exist): {e}")
 
 
 app = FastAPI(

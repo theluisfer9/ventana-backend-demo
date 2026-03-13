@@ -2,13 +2,28 @@ from typing import Optional
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
+from sqlalchemy import select
 
 from api.v1.config.database import get_sync_db_pg
 from api.v1.models.user import User
+from api.v1.models.user_session import UserSession
 from api.v1.auth.jwt_handler import verify_token
 
 # HTTP Bearer scheme for JWT
 security = HTTPBearer()
+
+
+def _resolve_active_session(db: Session, payload: dict) -> UserSession | None:
+    """Return the backing session for an access token, if it is still valid."""
+    session_jti = payload.get("sid")
+    if not session_jti:
+        return None
+
+    stmt = select(UserSession).where(UserSession.token_jti == session_jti)
+    session = db.execute(stmt).scalar_one_or_none()
+    if not session or not session.is_valid:
+        return None
+    return session
 
 
 def get_token_from_header(
@@ -41,6 +56,9 @@ def get_current_user(
 
     user_id = payload.get("sub")
     if user_id is None:
+        raise credentials_exception
+
+    if _resolve_active_session(db, payload) is None:
         raise credentials_exception
 
     # Get user from database
@@ -90,6 +108,9 @@ def get_optional_current_user(
 
     user_id = payload.get("sub")
     if user_id is None:
+        return None
+
+    if _resolve_active_session(db, payload) is None:
         return None
 
     user = db.get(User, user_id)

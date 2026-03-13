@@ -67,9 +67,11 @@ class TestValidateColumns:
         )
         assert len(result) == 1
 
-    def test_empty_list_returns_empty(self):
-        result = validate_columns([], SAMPLE_COLUMNS)
-        assert result == []
+    def test_empty_list_raises(self):
+        with pytest.raises(HTTPException) as exc_info:
+            validate_columns([], SAMPLE_COLUMNS)
+        assert exc_info.value.status_code == 400
+        assert "al menos una columna" in exc_info.value.detail.lower()
 
 
 # ==================== validate_filters ====================
