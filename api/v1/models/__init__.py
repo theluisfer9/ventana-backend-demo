@@ -3,6 +3,7 @@ from api.v1.models.permission import Permission
 from api.v1.models.role import Role, role_permissions
 from api.v1.models.user import User
 from api.v1.models.user_session import UserSession
+from api.v1.models.user_query_checkpoint import UserQueryCheckpoint
 from api.v1.models.ticket import Ticket, TicketStatus
 from api.v1.models.data_source import DataSource, DataSourceColumn, SavedQuery, ColumnDataType, ColumnCategory
 
@@ -13,6 +14,7 @@ __all__ = [
     "role_permissions",
     "User",
     "UserSession",
+    "UserQueryCheckpoint",
     "Ticket",
     "TicketStatus",
     "DataSource",

@@ -1,7 +1,9 @@
 """
 Tests para endpoints RSH de beneficiarios con mock ClickHouse.
 """
+from datetime import datetime, timedelta, timezone
 import pytest
+from api.v1.models.user_query_checkpoint import UserQueryCheckpoint
 
 BASE = "/api/v1/beneficiarios"
 
@@ -58,6 +60,56 @@ class TestCatalogos:
         assert len(data) > 0
         assert "code" in data[0]
         assert "name" in data[0]
+
+    def test_municipios_actualizados_primera_consulta_crea_checkpoint(
+        self,
+        authenticated_ch_client,
+        db_session,
+        test_admin_user,
+    ):
+        resp = authenticated_ch_client.get(f"{BASE}/municipios/actualizados")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["last_checked_at"] is None
+        assert data["total"] == 0
+        assert data["items"] == []
+        assert data["checked_at"] is not None
+
+        checkpoint = (
+            db_session.query(UserQueryCheckpoint)
+            .filter(
+                UserQueryCheckpoint.user_id == test_admin_user.id,
+                UserQueryCheckpoint.module == "beneficiarios",
+                UserQueryCheckpoint.scope == "municipios_actualizados",
+            )
+            .first()
+        )
+        assert checkpoint is not None
+
+    def test_municipios_actualizados_con_checkpoint_prev_io_retorna_items(
+        self,
+        authenticated_ch_client,
+        db_session,
+        test_admin_user,
+        mock_ch,
+    ):
+        checkpoint = UserQueryCheckpoint(
+            user_id=test_admin_user.id,
+            module="beneficiarios",
+            scope="municipios_actualizados",
+            last_checked_at=datetime(2022, 1, 1, tzinfo=timezone.utc),
+        )
+        db_session.add(checkpoint)
+        db_session.commit()
+
+        resp = authenticated_ch_client.get(f"{BASE}/municipios/actualizados")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["last_checked_at"] is not None
+        assert data["total"] > 0
+        assert len(data["items"]) == data["total"]
+        assert "code" in data["items"][0]
+        assert "ultima_actualizacion" in data["items"][0]
 
 
 # ========================= TestDashboard ============================

@@ -1,3 +1,4 @@
+from datetime import datetime
 from pydantic import BaseModel
 from typing import Optional
 
@@ -34,6 +35,22 @@ class MunicipioItem(BaseModel):
 class LugarPobladoItem(BaseModel):
     code: str
     name: str
+
+
+class MunicipioActualizadoItem(BaseModel):
+    code: str
+    name: str
+    departamento: str
+    departamento_codigo: str
+    fase_estado: str
+    ultima_actualizacion: datetime
+
+
+class MunicipiosActualizadosResponse(BaseModel):
+    last_checked_at: Optional[datetime] = None
+    checked_at: datetime
+    total: int
+    items: list[MunicipioActualizadoItem] = []
 
 
 # ── Filtros ───────────────────────────────────────────────────────────

@@ -34,6 +34,7 @@ from api.v1.models import (
     Role,
     User,
     UserSession,
+    UserQueryCheckpoint,
     Ticket,
     DataSource,
     DataSourceColumn,

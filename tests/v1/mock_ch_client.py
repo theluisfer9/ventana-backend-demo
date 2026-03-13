@@ -5,6 +5,7 @@ Intercepta queries SQL por patron y devuelve datos del dataset generado.
 Imita la interfaz de clickhouse_connect: result.column_names, result.result_rows.
 """
 import re
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from tests.v1.rsh_mock_data import RSHMockDataset
 
@@ -117,6 +118,10 @@ class MockClickHouseClient:
         # ── Catalogos: municipios por departamento ──
         if "distinct" in sql_clean and "municipio_codigo" in sql_clean and "depto" in params:
             return self._handle_catalogo_municipios(params)
+
+        # ── Municipios actualizados por checkpoint ──
+        if "argmax(fase_estado, fecha)" in sql_clean and "ultima_actualizacion" in sql_clean and "last_checked_at" in params:
+            return self._handle_municipios_actualizados(params)
 
         # ── Catalogos: lugares poblados por municipio ──
         if "distinct" in sql_clean and "lugarpoblado_codigo" in sql_clean and "muni" in params:
@@ -697,6 +702,52 @@ class MockClickHouseClient:
 
         columns = ["codigo", "nombre"]
         rows = [(c, n) for c, n in sorted(seen.items())]
+        return MockQueryResult(column_names=columns, result_rows=rows)
+
+    def _handle_municipios_actualizados(self, params: dict) -> MockQueryResult:
+        checkpoint = params["last_checked_at"]
+        checkpoint_date = checkpoint.date()
+        latest_by_muni = {}
+
+        for hogar in self.dataset.hogares:
+            muni_code = hogar["municipio_codigo"].strip()
+            if not muni_code:
+                continue
+
+            current = latest_by_muni.get(muni_code)
+            hogar_date = hogar["fecha"]
+            if current is None or hogar_date > current["ultima_actualizacion"]:
+                latest_by_muni[muni_code] = {
+                    "codigo": muni_code,
+                    "nombre": hogar["municipio"],
+                    "departamento": hogar["departamento"],
+                    "departamento_codigo": hogar["departamento_codigo"].strip(),
+                    "fase_estado": hogar.get("fase_estado", ""),
+                    "ultima_actualizacion": hogar_date,
+                }
+
+        rows = [
+            (
+                item["codigo"],
+                item["nombre"],
+                item["departamento"],
+                item["departamento_codigo"],
+                item["fase_estado"],
+                datetime.combine(item["ultima_actualizacion"], datetime.min.time(), tzinfo=timezone.utc),
+            )
+            for item in latest_by_muni.values()
+            if item["ultima_actualizacion"] > checkpoint_date
+        ]
+        rows.sort(key=lambda row: (row[5], row[0]), reverse=True)
+
+        columns = [
+            "codigo",
+            "nombre",
+            "departamento",
+            "departamento_codigo",
+            "fase_estado",
+            "ultima_actualizacion",
+        ]
         return MockQueryResult(column_names=columns, result_rows=rows)
 
     def _handle_catalogo_lugares(self, params: dict) -> MockQueryResult:

@@ -1,9 +1,9 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
-from api.v1.config.database import get_ch_client
+from api.v1.config.database import get_ch_client, get_sync_db_pg
 from api.v1.dependencies.permission_dependency import RequirePermission
 from api.v1.dependencies.beneficiario_dependency import beneficiario_filters_dep
 from api.v1.auth.permissions import PermissionCode
@@ -19,6 +19,8 @@ from api.v1.schemas.beneficiario import (
     CatalogosResponse,
     CatalogoItem,
     MunicipioItem,
+    MunicipioActualizadoItem,
+    MunicipiosActualizadosResponse,
     LugarPobladoItem,
 )
 from api.v1.services.rsh.queries import (
@@ -28,6 +30,7 @@ from api.v1.services.rsh.queries import (
     query_dashboard,
     query_catalogos,
     query_municipios,
+    query_municipios_actualizados,
     query_lugares_poblados,
     query_personas_hogar,
     query_vivienda_hogar,
@@ -39,6 +42,10 @@ from api.v1.services.rsh.mappers import (
     row_to_vivienda,
 )
 from api.v1.services.beneficiario.export import generate_csv, generate_excel, generate_pdf
+from api.v1.services.user_checkpoint import (
+    get_user_query_checkpoint,
+    upsert_user_query_checkpoint,
+)
 
 router = APIRouter(prefix="/beneficiarios", tags=["Beneficiarios"])
 
@@ -79,6 +86,45 @@ def municipios_por_departamento(
     """Obtener municipios por departamento (cascada)."""
     raw = query_municipios(client, departamento_codigo)
     return [MunicipioItem(code=m["codigo"], name=m["nombre"]) for m in raw]
+
+
+@router.get("/municipios/actualizados", response_model=MunicipiosActualizadosResponse)
+def municipios_actualizados(
+    db=Depends(get_sync_db_pg),
+    current_user=Depends(RequirePermission(PermissionCode.BENEFICIARIES_READ)),
+    client=Depends(get_ch_client),
+):
+    """Obtiene municipios actualizados desde la última consulta registrada del usuario."""
+    module = "beneficiarios"
+    scope = "municipios_actualizados"
+    checked_at = datetime.now(timezone.utc)
+
+    checkpoint = get_user_query_checkpoint(db, current_user.id, module, scope)
+    last_checked_at = checkpoint.last_checked_at if checkpoint else None
+
+    items = []
+    if last_checked_at is not None:
+        raw = query_municipios_actualizados(client, last_checked_at)
+        items = [
+            MunicipioActualizadoItem(
+                code=m["codigo"],
+                name=m["nombre"],
+                departamento=m["departamento"],
+                departamento_codigo=m["departamento_codigo"],
+                fase_estado=m["fase_estado"],
+                ultima_actualizacion=m["ultima_actualizacion"],
+            )
+            for m in raw
+        ]
+
+    upsert_user_query_checkpoint(db, current_user.id, module, scope, checked_at)
+
+    return MunicipiosActualizadosResponse(
+        last_checked_at=last_checked_at,
+        checked_at=checked_at,
+        total=len(items),
+        items=items,
+    )
 
 
 @router.get("/catalogos/lugares-poblados")

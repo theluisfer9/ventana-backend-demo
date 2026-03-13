@@ -657,6 +657,43 @@ def query_municipios(client, departamento_codigo: str) -> list[dict]:
     ]
 
 
+def query_municipios_actualizados(client, last_checked_at) -> list[dict]:
+    """
+    Obtiene municipios cuya última actualización es posterior al checkpoint del usuario.
+
+    Returns:
+        Lista de diccionarios con metadata de actualización por municipio.
+    """
+    query = """
+        SELECT
+            trim(municipio_codigo) as codigo,
+            municipio as nombre,
+            departamento,
+            trim(departamento_codigo) as departamento_codigo,
+            argMax(fase_estado, fecha) as fase_estado,
+            max(toDate(fecha)) as ultima_actualizacion
+        FROM rsh.vw_pobreza_hogars
+        WHERE municipio_codigo != ''
+        GROUP BY municipio_codigo, municipio, departamento, departamento_codigo
+        HAVING ultima_actualizacion > toDate({last_checked_at:DateTime})
+        ORDER BY ultima_actualizacion DESC, codigo
+    """
+
+    result = client.query(query, parameters={"last_checked_at": last_checked_at})
+
+    return [
+        {
+            "codigo": row[0],
+            "nombre": row[1],
+            "departamento": row[2],
+            "departamento_codigo": row[3],
+            "fase_estado": row[4],
+            "ultima_actualizacion": row[5],
+        }
+        for row in result.result_rows
+    ]
+
+
 def query_lugares_poblados(client, municipio_codigo: str) -> list[dict]:
     """
     Obtiene lugares poblados filtrados por municipio.
