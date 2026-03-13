@@ -20,7 +20,7 @@ from api.v1.services.beneficiario import (
     get_municipios_by_departamento,
     get_filtered_enriched,
 )
-from api.v1.services.beneficiario.export import generate_excel, generate_pdf
+from api.v1.services.beneficiario.export import generate_csv, generate_excel, generate_pdf
 
 
 # =====================================================================
@@ -212,6 +212,29 @@ class TestBeneficiarioExportExcel:
         data = buf.read()
         assert len(data) > 0
         assert data[:2] == b"PK"
+
+
+class TestBeneficiarioExportCsv:
+    """Tests de generacion de CSV."""
+
+    def test_csv_sin_filtro(self):
+        filters = BeneficiarioFilters()
+        enriched = get_filtered_enriched(filters)
+        buf = generate_csv(enriched)
+        assert isinstance(buf, BytesIO)
+        data = buf.read()
+        assert len(data) > 0
+        assert b"ID Hogar" in data
+        assert b"Departamento" in data
+
+    def test_csv_con_filtro(self):
+        filters = BeneficiarioFilters(departamento_codigo="GUA")
+        enriched = get_filtered_enriched(filters)
+        assert len(enriched) == 9
+        buf = generate_csv(enriched)
+        data = buf.read().decode("utf-8-sig")
+        lines = [line for line in data.strip().splitlines() if line]
+        assert len(lines) == 10  # header + 9 filas
 
 
 class TestBeneficiarioExportPdf:

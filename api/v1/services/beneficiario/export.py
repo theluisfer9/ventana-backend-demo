@@ -2,7 +2,9 @@
 Generacion de reportes de beneficiarios en Excel y PDF.
 """
 from io import BytesIO
+from io import StringIO
 from datetime import datetime
+import csv
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -50,6 +52,21 @@ def _row(b: dict) -> list:
         round(b.get("pmt", 0), 4),
         b.get("pmt_clasificacion", ""),
     ]
+
+
+# ── CSV ──────────────────────────────────────────────────────────────
+
+def generate_csv(rows: list[dict]) -> BytesIO:
+    """Genera un archivo .csv UTF-8 en memoria con los beneficiarios dados."""
+    text_buffer = StringIO()
+    writer = csv.writer(text_buffer, lineterminator="\n")
+    writer.writerow(COLUMNS)
+    for beneficiario in rows:
+        writer.writerow(_row(beneficiario))
+
+    output = BytesIO(text_buffer.getvalue().encode("utf-8-sig"))
+    output.seek(0)
+    return output
 
 
 # ── Excel ────────────────────────────────────────────────────────────

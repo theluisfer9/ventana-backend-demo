@@ -38,7 +38,7 @@ from api.v1.services.rsh.mappers import (
     row_to_persona,
     row_to_vivienda,
 )
-from api.v1.services.beneficiario.export import generate_excel, generate_pdf
+from api.v1.services.beneficiario.export import generate_csv, generate_excel, generate_pdf
 
 router = APIRouter(prefix="/beneficiarios", tags=["Beneficiarios"])
 
@@ -162,6 +162,25 @@ def export_excel(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="beneficiarios_{ts}.xlsx"'},
+    )
+
+
+@router.get("/export/csv")
+def export_csv(
+    filters: BeneficiarioFilters = Depends(beneficiario_filters_dep),
+    current_user=Depends(RequirePermission(PermissionCode.BENEFICIARIES_EXPORT)),
+    client=Depends(get_ch_client),
+):
+    """Exportar beneficiarios filtrados a CSV."""
+    filter_kwargs = filters.model_dump(exclude_none=True)
+    rows, _ = query_beneficiarios_lista(client, offset=0, limit=10000, **filter_kwargs)
+    items = [row_to_beneficiario_resumen(r) for r in rows]
+    buf = generate_csv(items)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return StreamingResponse(
+        buf,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="beneficiarios_{ts}.csv"'},
     )
 
 
