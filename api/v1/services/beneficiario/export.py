@@ -4,6 +4,8 @@ Generacion de reportes de beneficiarios en Excel y PDF.
 from io import BytesIO
 from io import StringIO
 from datetime import datetime
+from zipfile import ZipFile, ZIP_DEFLATED
+import re
 import csv
 
 from openpyxl import Workbook
@@ -33,6 +35,19 @@ COLUMNS = [
 
 # Columnas para PDF (sin PMT por espacio)
 PDF_COLUMNS = COLUMNS[:11]
+EXCEL_ZIP_THRESHOLD = 10_000
+
+
+def _sanitize_excel_name(value: str, fallback: str) -> str:
+    cleaned = re.sub(r"[\[\]\*:/\\\?]", " ", (value or "").strip())
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return (cleaned or fallback)[:31]
+
+
+def _sanitize_filename(value: str, fallback: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._ -]", "_", (value or "").strip())
+    cleaned = re.sub(r"\s+", "_", cleaned).strip("._ ")
+    return cleaned or fallback
 
 
 def _row(b: dict) -> list:
@@ -121,6 +136,91 @@ def generate_excel(rows: list[dict]) -> BytesIO:
     wb.save(buf)
     buf.seek(0)
     return buf
+
+
+def _populate_worksheet(ws, rows: list[dict]) -> None:
+    """Escribe headers, filas y formato base a una hoja dada."""
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    header_fill = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
+    header_alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    thin_border = Border(
+        left=Side(style="thin"),
+        right=Side(style="thin"),
+        top=Side(style="thin"),
+        bottom=Side(style="thin"),
+    )
+
+    for col_idx, title in enumerate(COLUMNS, 1):
+        cell = ws.cell(row=1, column=col_idx, value=title)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_alignment
+        cell.border = thin_border
+
+    for row_idx, beneficiario in enumerate(rows, 2):
+        values = _row(beneficiario)
+        for col_idx, value in enumerate(values, 1):
+            cell = ws.cell(row=row_idx, column=col_idx, value=value)
+            cell.border = thin_border
+            cell.alignment = Alignment(vertical="center", wrap_text=True)
+
+    for col_idx in range(1, len(COLUMNS) + 1):
+        max_len = len(str(COLUMNS[col_idx - 1]))
+        for row in ws.iter_rows(min_row=2, min_col=col_idx, max_col=col_idx):
+            for cell in row:
+                if cell.value:
+                    max_len = max(max_len, len(str(cell.value)))
+        ws.column_dimensions[get_column_letter(col_idx)].width = min(max_len + 4, 60)
+
+    ws.freeze_panes = "A2"
+
+
+def _group_rows(rows: list[dict]) -> dict[str, dict[str, list[dict]]]:
+    grouped: dict[str, dict[str, list[dict]]] = {}
+    for row in rows:
+        depto = row.get("departamento", "Sin departamento") or "Sin departamento"
+        muni = row.get("municipio", "Sin municipio") or "Sin municipio"
+        grouped.setdefault(depto, {}).setdefault(muni, []).append(row)
+    return grouped
+
+
+def generate_excel_grouped_zip(rows: list[dict]) -> BytesIO:
+    """
+    Genera un ZIP con un workbook por departamento y una hoja por municipio.
+    """
+    grouped = _group_rows(rows)
+    zip_buffer = BytesIO()
+
+    with ZipFile(zip_buffer, mode="w", compression=ZIP_DEFLATED) as zip_file:
+        for depto, municipios in sorted(grouped.items()):
+            workbook = Workbook()
+            default_sheet = workbook.active
+            first_sheet = True
+
+            for municipio, municipio_rows in sorted(municipios.items()):
+                ws = default_sheet if first_sheet else workbook.create_sheet()
+                ws.title = _sanitize_excel_name(municipio, "Municipio")
+                _populate_worksheet(ws, municipio_rows)
+                first_sheet = False
+
+            workbook_buffer = BytesIO()
+            workbook.save(workbook_buffer)
+            workbook_buffer.seek(0)
+
+            depto_code = rows and next(
+                (
+                    str(row.get("departamento_codigo", "")).strip()
+                    for row in rows
+                    if (row.get("departamento") or "Sin departamento") == depto
+                ),
+                "",
+            )
+            prefix = f"{depto_code}_" if depto_code else ""
+            filename = f"{prefix}{_sanitize_filename(depto, 'departamento')}.xlsx"
+            zip_file.writestr(filename, workbook_buffer.getvalue())
+
+    zip_buffer.seek(0)
+    return zip_buffer
 
 
 # ── PDF ──────────────────────────────────────────────────────────────
