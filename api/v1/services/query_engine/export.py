@@ -1,12 +1,16 @@
 """
 Generacion de reportes CSV, Excel y PDF para consultas del Query Builder.
-Optimizado para datasets grandes: CSV usa streaming, Excel usa write_only,
-PDF pre-calcula anchos una sola vez.
+
+Excel y PDF se agrupan por departamento (un archivo por depto) y por municipio
+(una hoja/seccion por municipio), entregados dentro de un ZIP.
+CSV se entrega completo en streaming.
 """
 from io import BytesIO, StringIO
 from datetime import datetime
+from collections import defaultdict
 from collections.abc import Generator
 import csv
+import zipfile
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -14,9 +18,60 @@ from openpyxl.utils import get_column_letter
 from fpdf import FPDF
 
 
+# ── Helpers internos ────────────────────────────────────────────────
+
+_GEO_DEPTO_KEYWORDS = ("departamento",)
+_GEO_MUNI_KEYWORDS = ("municipio",)
+
+
+def _find_geo_key(columns_meta: list[dict], keywords: tuple[str, ...]) -> str | None:
+    """Encuentra la key de una columna geo en columns_meta."""
+    for c in columns_meta:
+        name = c["column_name"].lower()
+        if any(kw in name for kw in keywords):
+            return c["column_name"]
+    return None
+
+
+def _group_rows_by_geo(
+    rows: list[dict],
+    depto_key: str | None,
+    muni_key: str | None,
+) -> dict[str, dict[str, list[dict]]]:
+    """Agrupa rows en {departamento: {municipio: [rows]}}."""
+    tree: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
+    for row in rows:
+        depto = str(row.get(depto_key, "Sin Departamento")) if depto_key else "Sin Departamento"
+        muni = str(row.get(muni_key, "Sin Municipio")) if muni_key else "Sin Municipio"
+        tree[depto][muni].append(row)
+    return tree
+
+
+def _non_geo_meta(columns_meta: list[dict], depto_key: str | None, muni_key: str | None) -> tuple[list[str], list[str]]:
+    """Retorna headers y keys excluyendo las columnas geo de agrupacion."""
+    skip = {k for k in (depto_key, muni_key) if k}
+    headers = [c["label"] for c in columns_meta if c["column_name"] not in skip]
+    keys = [c["column_name"] for c in columns_meta if c["column_name"] not in skip]
+    return headers, keys
+
+
+# ── Estilos compartidos Excel ───────────────────────────────────────
+
+_HEADER_FONT = Font(bold=True, color="FFFFFF", size=11)
+_HEADER_FILL = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
+_HEADER_ALIGN = Alignment(horizontal="center", vertical="center", wrap_text=True)
+_THIN_BORDER = Border(
+    left=Side(style="thin"),
+    right=Side(style="thin"),
+    top=Side(style="thin"),
+    bottom=Side(style="thin"),
+)
+_CELL_ALIGN = Alignment(vertical="center", wrap_text=True)
+
+
 # ── CSV (streaming por chunks) ───────────────────────────────────────
 
-_CSV_CHUNK_SIZE = 1000
+_CSV_CHUNK_SIZE = 5000
 
 
 def generate_csv_streaming(rows: list[dict], columns_meta: list[dict]) -> Generator[bytes, None, None]:
@@ -39,47 +94,73 @@ def generate_csv_streaming(rows: list[dict], columns_meta: list[dict]) -> Genera
         yield chunk_buf.getvalue().encode("utf-8")
 
 
-# ── Excel (write-only mode para menor uso de RAM) ────────────────────
+# ── Excel (ZIP: un xlsx por departamento, una hoja por municipio) ───
 
-def generate_excel(rows: list[dict], columns_meta: list[dict], title: str = "Consulta") -> BytesIO:
-    """Genera Excel (.xlsx) en modo write_only para eficiencia con datasets grandes."""
-    headers = [c["label"] for c in columns_meta]
-    keys = [c["column_name"] for c in columns_meta]
+def _write_excel_sheet(ws, headers: list[str], keys: list[str], rows: list[dict]):
+    """Escribe headers + datos en una hoja ya creada."""
+    for col_idx, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_idx, value=h)
+        cell.font = _HEADER_FONT
+        cell.fill = _HEADER_FILL
+        cell.alignment = _HEADER_ALIGN
+        cell.border = _THIN_BORDER
 
-    wb = Workbook(write_only=True)
-    ws = wb.create_sheet(title=title[:31])
+    for row_idx, row in enumerate(rows, 2):
+        for col_idx, key in enumerate(keys, 1):
+            cell = ws.cell(row=row_idx, column=col_idx, value=row.get(key, ""))
+            cell.border = _THIN_BORDER
+            cell.alignment = _CELL_ALIGN
 
-    # En write_only no se pueden aplicar estilos por celda directamente,
-    # pero si se pueden pasar listas de celdas con estilo.
-    from openpyxl.cell import WriteOnlyCell
-
-    header_font = Font(bold=True, color="FFFFFF", size=11)
-    header_fill = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
-    header_alignment = Alignment(horizontal="center", vertical="center")
-
-    # Header row con estilos
-    header_cells = []
-    for h in headers:
-        cell = WriteOnlyCell(ws, value=h)
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = header_alignment
-        header_cells.append(cell)
-    ws.append(header_cells)
-
-    # Data rows (sin estilos individuales para velocidad)
-    for row in rows:
-        ws.append([row.get(k, "") for k in keys])
-
-    # Anchos de columna estimados (basado en header + muestreo)
-    sample_size = min(100, len(rows))
+    # Auto-width (sample first 100 rows)
     for col_idx, key in enumerate(keys, 1):
         max_len = len(headers[col_idx - 1])
-        for row in rows[:sample_size]:
+        for row in rows[:100]:
             val = row.get(key, "")
             if val is not None:
                 max_len = max(max_len, len(str(val)))
         ws.column_dimensions[get_column_letter(col_idx)].width = min(max_len + 4, 60)
+
+    ws.freeze_panes = "A2"
+
+
+def generate_excel_zip(rows: list[dict], columns_meta: list[dict], title: str = "Consulta") -> BytesIO:
+    """Genera ZIP con un .xlsx por departamento; cada municipio es una hoja."""
+    depto_key = _find_geo_key(columns_meta, _GEO_DEPTO_KEYWORDS)
+    muni_key = _find_geo_key(columns_meta, _GEO_MUNI_KEYWORDS)
+    tree = _group_rows_by_geo(rows, depto_key, muni_key)
+    headers, keys = _non_geo_meta(columns_meta, depto_key, muni_key)
+
+    zip_buf = BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for depto_name in sorted(tree.keys()):
+            municipios = tree[depto_name]
+            wb = Workbook()
+            wb.remove(wb.active)
+
+            for muni_name in sorted(municipios.keys()):
+                safe_sheet = muni_name[:31] or "Sin Municipio"
+                ws = wb.create_sheet(title=safe_sheet)
+                _write_excel_sheet(ws, headers, keys, municipios[muni_name])
+
+            xlsx_buf = BytesIO()
+            wb.save(xlsx_buf)
+            safe_depto = "".join(c if c.isalnum() or c in " _-" else "_" for c in depto_name).strip()
+            zf.writestr(f"{safe_depto}.xlsx", xlsx_buf.getvalue())
+
+    zip_buf.seek(0)
+    return zip_buf
+
+
+# Mantener la funcion original para uso simple (sin agrupacion)
+def generate_excel(rows: list[dict], columns_meta: list[dict], title: str = "Consulta") -> BytesIO:
+    """Genera Excel (.xlsx) simple con estilos, bordes y freeze panes."""
+    headers = [c["label"] for c in columns_meta]
+    keys = [c["column_name"] for c in columns_meta]
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = title[:31]
+    _write_excel_sheet(ws, headers, keys, rows)
 
     buf = BytesIO()
     wb.save(buf)
@@ -87,14 +168,12 @@ def generate_excel(rows: list[dict], columns_meta: list[dict], title: str = "Con
     return buf
 
 
-# ── PDF ──────────────────────────────────────────────────────────────
+# ── PDF (ZIP: un pdf por departamento, separado por municipio) ──────
 
 class _QueryPDF(FPDF):
-    def __init__(self, title: str, col_widths: list[float], col_headers: list[str], *args, **kwargs):
+    def __init__(self, report_title: str, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self._report_title = title
-        self._col_widths = col_widths
-        self._col_headers = col_headers
+        self._report_title = report_title
 
     def header(self):
         self.set_font("Helvetica", "B", 14)
@@ -106,19 +185,6 @@ class _QueryPDF(FPDF):
             new_x="LMARGIN", new_y="NEXT", align="C",
         )
         self.ln(4)
-        # Re-dibujar header de tabla en cada pagina
-        self._draw_table_header()
-
-    def _draw_table_header(self):
-        self.set_font("Helvetica", "B", 7)
-        self.set_fill_color(31, 78, 121)
-        self.set_text_color(255, 255, 255)
-        for i, h in enumerate(self._col_headers):
-            label = h[:20] + "..." if len(h) > 20 else h
-            self.cell(self._col_widths[i], 8, label, border=1, fill=True, align="C")
-        self.ln()
-        self.set_font("Helvetica", "", 7)
-        self.set_text_color(0, 0, 0)
 
     def footer(self):
         self.set_y(-15)
@@ -126,31 +192,40 @@ class _QueryPDF(FPDF):
         self.cell(0, 10, f"Pagina {self.page_no()}/{{nb}}", align="C")
 
 
-def generate_pdf(rows: list[dict], columns_meta: list[dict], title: str = "Consulta") -> BytesIO:
-    """Genera PDF landscape. Header de tabla se repite en cada pagina."""
-    headers = [c["label"] for c in columns_meta]
-    keys = [c["column_name"] for c in columns_meta]
-
-    # Max 10 columnas por espacio
-    max_cols = min(len(headers), 10)
-    headers = headers[:max_cols]
-    keys = keys[:max_cols]
-
-    # Anchos proporcionales
+def _calc_col_widths(headers: list[str], keys: list[str], rows: list[dict]) -> list[float]:
+    """Calcula anchos proporcionales para PDF."""
     usable_width = 277
-    col_width = usable_width / len(headers)
-    col_widths = [col_width] * len(headers)
+    sample = rows[:100]
+    raw_widths = []
+    for i, key in enumerate(keys):
+        max_len = len(headers[i])
+        for row in sample:
+            val = str(row.get(key, ""))
+            max_len = max(max_len, min(len(val), 35))
+        raw_widths.append(max_len)
 
-    pdf = _QueryPDF(
-        title, col_widths, headers,
-        orientation="L", unit="mm", format="A4",
-    )
-    pdf.alias_nb_pages()
-    pdf.set_auto_page_break(auto=True, margin=20)
-    pdf.add_page()
+    total_raw = sum(raw_widths) or 1
+    col_widths = [max(w / total_raw * usable_width, 15) for w in raw_widths]
+    scale = usable_width / sum(col_widths)
+    return [w * scale for w in col_widths]
 
-    # Datos
-    for idx, row in enumerate(rows):
+
+def _write_pdf_table_header(pdf: FPDF, headers: list[str], col_widths: list[float]):
+    """Escribe la fila de encabezados de tabla en el PDF."""
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.set_fill_color(31, 78, 121)
+    pdf.set_text_color(255, 255, 255)
+    for i, h in enumerate(headers):
+        label = h[:20] + "..." if len(h) > 20 else h
+        pdf.cell(col_widths[i], 8, label, border=1, fill=True, align="C")
+    pdf.ln()
+    pdf.set_font("Helvetica", "", 7)
+    pdf.set_text_color(0, 0, 0)
+
+
+def _write_pdf_rows(pdf: FPDF, keys: list[str], col_widths: list[float], rows: list[dict], start_idx: int = 0):
+    """Escribe filas de datos en el PDF."""
+    for idx, row in enumerate(rows, start_idx):
         if idx % 2 == 1:
             pdf.set_fill_color(235, 241, 247)
         else:
@@ -158,10 +233,81 @@ def generate_pdf(rows: list[dict], columns_meta: list[dict], title: str = "Consu
 
         for i, key in enumerate(keys):
             val = str(row.get(key, ""))
-            if len(val) > 25:
-                val = val[:22] + "..."
+            if len(val) > 35:
+                val = val[:32] + "..."
             pdf.cell(col_widths[i], 7, val, border=1, fill=True, align="C")
         pdf.ln()
+
+
+def generate_pdf_zip(rows: list[dict], columns_meta: list[dict], title: str = "Consulta") -> BytesIO:
+    """Genera ZIP con un .pdf por departamento, secciones por municipio."""
+    depto_key = _find_geo_key(columns_meta, _GEO_DEPTO_KEYWORDS)
+    muni_key = _find_geo_key(columns_meta, _GEO_MUNI_KEYWORDS)
+    tree = _group_rows_by_geo(rows, depto_key, muni_key)
+    headers, keys = _non_geo_meta(columns_meta, depto_key, muni_key)
+
+    # Max 10 columnas
+    max_cols = min(len(headers), 10)
+    headers = headers[:max_cols]
+    keys = keys[:max_cols]
+
+    zip_buf = BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for depto_name in sorted(tree.keys()):
+            municipios = tree[depto_name]
+
+            # Calcular anchos con todas las filas del depto
+            all_depto_rows = [r for muni_rows in municipios.values() for r in muni_rows]
+            col_widths = _calc_col_widths(headers, keys, all_depto_rows)
+
+            pdf = _QueryPDF(
+                f"{title} - {depto_name}",
+                orientation="L", unit="mm", format="A4",
+            )
+            pdf.alias_nb_pages()
+            pdf.set_auto_page_break(auto=True, margin=20)
+
+            for muni_name in sorted(municipios.keys()):
+                muni_rows = municipios[muni_name]
+                pdf.add_page()
+
+                # Subtitulo del municipio
+                pdf.set_font("Helvetica", "B", 10)
+                pdf.set_text_color(31, 78, 121)
+                pdf.cell(0, 8, f"Municipio: {muni_name}", new_x="LMARGIN", new_y="NEXT")
+                pdf.ln(2)
+
+                _write_pdf_table_header(pdf, headers, col_widths)
+                _write_pdf_rows(pdf, keys, col_widths, muni_rows)
+
+            pdf_buf = BytesIO()
+            pdf.output(pdf_buf)
+            safe_depto = "".join(c if c.isalnum() or c in " _-" else "_" for c in depto_name).strip()
+            zf.writestr(f"{safe_depto}.pdf", pdf_buf.getvalue())
+
+    zip_buf.seek(0)
+    return zip_buf
+
+
+# Mantener la funcion original para uso simple
+def generate_pdf(rows: list[dict], columns_meta: list[dict], title: str = "Consulta") -> BytesIO:
+    """Genera PDF landscape con anchos calculados por columna."""
+    headers = [c["label"] for c in columns_meta]
+    keys = [c["column_name"] for c in columns_meta]
+
+    max_cols = min(len(headers), 10)
+    headers = headers[:max_cols]
+    keys = keys[:max_cols]
+
+    col_widths = _calc_col_widths(headers, keys, rows)
+
+    pdf = _QueryPDF(title, orientation="L", unit="mm", format="A4")
+    pdf.alias_nb_pages()
+    pdf.set_auto_page_break(auto=True, margin=20)
+    pdf.add_page()
+
+    _write_pdf_table_header(pdf, headers, col_widths)
+    _write_pdf_rows(pdf, keys, col_widths, rows)
 
     buf = BytesIO()
     pdf.output(buf)

@@ -19,7 +19,9 @@ from api.v1.services.query_engine.engine import execute_query
 from api.v1.services.query_engine.export import (
     generate_csv_streaming as gen_query_csv_stream,
     generate_excel as gen_query_excel,
+    generate_excel_zip as gen_query_excel_zip,
     generate_pdf as gen_query_pdf,
+    generate_pdf_zip as gen_query_pdf_zip,
 )
 from api.v1.auth.permissions import PermissionCode
 
@@ -101,6 +103,24 @@ def _get_user_datasource(ds_id: UUID, user: User, db: Session) -> DataSource:
         if not has_access:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tiene acceso a este DataSource")
     return ds
+
+
+_GEO_REQUIRED_KEYWORDS = ("departamento", "municipio")
+
+
+def _ensure_geo_columns(columns: list[str], columns_def: list) -> list[str]:
+    """Ensure departamento and municipio columns are always included."""
+    col_map = {c.column_name: c for c in columns_def}
+    columns_lower = {c.lower() for c in columns}
+    for kw in _GEO_REQUIRED_KEYWORDS:
+        if any(kw in name for name in columns_lower):
+            continue
+        # Find the first column in the datasource that matches this keyword
+        for col in columns_def:
+            if kw in col.column_name.lower() and col.is_selectable:
+                columns.insert(0, col.column_name)
+                break
+    return columns
 
 
 def _is_institutional_admin(user: User) -> bool:
@@ -220,6 +240,7 @@ def execute_adhoc_query(
     client=Depends(get_ch_client),
 ):
     ds = _get_user_datasource(body.datasource_id, current_user, db)
+    body.columns = _ensure_geo_columns(body.columns, ds.columns_def)
     validated_cols = validate_columns(body.columns, ds.columns_def)
     filters_dicts = [f.model_dump() for f in body.filters]
     validate_filters(filters_dicts, ds.columns_def)
@@ -256,18 +277,13 @@ _MEDIA_TYPES = {
     "pdf": "application/pdf",
 }
 _EXTENSIONS = {"csv": "csv", "excel": "xlsx", "pdf": "pdf"}
+_EXPORT_ROW_LIMITS = {"csv": 2_000_000_000, "excel": 50_000, "pdf": 5_000}
 
 
-@router.post("/execute/export")
-def export_adhoc_query(
-    body: QueryExecuteRequest,
-    formato: ExportFormat = Query(..., description="Formato de exportacion: csv, excel, pdf"),
-    current_user: User = Depends(_query_permission),
-    db: Session = Depends(get_sync_db_pg),
-    client=Depends(get_ch_client),
-):
-    """Ejecutar una consulta ad-hoc y descargar el resultado como CSV, Excel o PDF."""
-    ds = _get_user_datasource(body.datasource_id, current_user, db)
+def _execute_export(body: QueryExecuteRequest, user: User, db: Session, client, formato: str):
+    """Logica comun para exportar una consulta ad-hoc."""
+    ds = _get_user_datasource(body.datasource_id, user, db)
+    body.columns = _ensure_geo_columns(body.columns, ds.columns_def)
     validated_cols = validate_columns(body.columns, ds.columns_def)
     filters_dicts = [f.model_dump() for f in body.filters]
     validate_filters(filters_dicts, ds.columns_def)
@@ -284,8 +300,9 @@ def export_adhoc_query(
     if agg_dicts:
         validate_aggregations(agg_dicts, ds.columns_def)
 
+    row_limit = _EXPORT_ROW_LIMITS[formato]
     rows, _ = execute_query(
-        client, ds, validated_cols, filters_dicts, 0, 2_000_000_000,
+        client, ds, validated_cols, filters_dicts, 0, row_limit,
         group_by=group_by_names or None,
         aggregations=agg_dicts or None,
     )
@@ -294,28 +311,90 @@ def export_adhoc_query(
         {"column_name": c.column_name, "label": c.label, "data_type": c.data_type}
         for c in _build_columns_meta(group_by_names or None, agg_dicts or None, ds.columns_def, validated_cols)
     ]
+    return rows, columns_meta
 
+
+@router.post("/execute/export")
+def export_adhoc_query(
+    body: QueryExecuteRequest,
+    formato: ExportFormat = Query(...),
+    current_user: User = Depends(_query_permission),
+    db: Session = Depends(get_sync_db_pg),
+    client=Depends(get_ch_client),
+):
+    """Exportar consulta ad-hoc a CSV, Excel (ZIP) o PDF (ZIP)."""
+    rows, columns_meta = _execute_export(body, current_user, db, client, formato.value)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    ext = _EXTENSIONS[formato.value]
-    filename = f"consulta_{ts}.{ext}"
-    disposition = f'attachment; filename="{filename}"'
 
     if formato == ExportFormat.csv:
         return StreamingResponse(
             gen_query_csv_stream(rows, columns_meta),
             media_type=_MEDIA_TYPES["csv"],
-            headers={"Content-Disposition": disposition},
+            headers={"Content-Disposition": f'attachment; filename="consulta_{ts}.csv"'},
         )
 
     if formato == ExportFormat.excel:
-        buf = gen_query_excel(rows, columns_meta, title="Consulta")
+        buf = gen_query_excel_zip(rows, columns_meta, title="Consulta")
     else:
-        buf = gen_query_pdf(rows, columns_meta, title="Consulta")
+        buf = gen_query_pdf_zip(rows, columns_meta, title="Consulta")
 
     return StreamingResponse(
         buf,
-        media_type=_MEDIA_TYPES[formato.value],
-        headers={"Content-Disposition": disposition},
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="consulta_{ts}.zip"'},
+    )
+
+
+@router.post("/execute/export/csv")
+def export_adhoc_csv(
+    body: QueryExecuteRequest,
+    current_user: User = Depends(_query_permission),
+    db: Session = Depends(get_sync_db_pg),
+    client=Depends(get_ch_client),
+):
+    """Exportar consulta ad-hoc a CSV."""
+    rows, columns_meta = _execute_export(body, current_user, db, client, "csv")
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return StreamingResponse(
+        gen_query_csv_stream(rows, columns_meta),
+        media_type=_MEDIA_TYPES["csv"],
+        headers={"Content-Disposition": f'attachment; filename="consulta_{ts}.csv"'},
+    )
+
+
+@router.post("/execute/export/excel")
+def export_adhoc_excel(
+    body: QueryExecuteRequest,
+    current_user: User = Depends(_query_permission),
+    db: Session = Depends(get_sync_db_pg),
+    client=Depends(get_ch_client),
+):
+    """Exportar consulta ad-hoc a Excel (ZIP por departamento)."""
+    rows, columns_meta = _execute_export(body, current_user, db, client, "excel")
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    buf = gen_query_excel_zip(rows, columns_meta, title="Consulta")
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="consulta_{ts}.zip"'},
+    )
+
+
+@router.post("/execute/export/pdf")
+def export_adhoc_pdf(
+    body: QueryExecuteRequest,
+    current_user: User = Depends(_query_permission),
+    db: Session = Depends(get_sync_db_pg),
+    client=Depends(get_ch_client),
+):
+    """Exportar consulta ad-hoc a PDF (ZIP por departamento)."""
+    rows, columns_meta = _execute_export(body, current_user, db, client, "pdf")
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    buf = gen_query_pdf_zip(rows, columns_meta, title="Consulta")
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="consulta_{ts}.zip"'},
     )
 
 
@@ -326,6 +405,7 @@ def save_query(
     db: Session = Depends(get_sync_db_pg),
 ):
     ds = _get_user_datasource(body.datasource_id, current_user, db)
+    body.selected_columns = _ensure_geo_columns(body.selected_columns, ds.columns_def)
     validate_columns(body.selected_columns, ds.columns_def)
     filters_dicts = [f.model_dump() for f in body.filters]
     validate_filters(filters_dicts, ds.columns_def)
@@ -598,6 +678,7 @@ def execute_saved_query(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Consulta no encontrada")
 
     ds = _get_user_datasource(sq.datasource_id, current_user, db)
+    sq.selected_columns = _ensure_geo_columns(list(sq.selected_columns), ds.columns_def)
     validated_cols = validate_columns(sq.selected_columns, ds.columns_def)
     validate_filters(sq.filters or [], ds.columns_def)
 
@@ -617,30 +698,25 @@ def execute_saved_query(
 # ── Export de consultas guardadas ────────────────────────────────────
 
 
-@router.get("/saved/{query_id}/export")
-def export_saved_query(
-    query_id: UUID,
-    formato: ExportFormat = Query(..., description="Formato de exportacion: csv, excel, pdf"),
-    current_user: User = Depends(_query_permission),
-    db: Session = Depends(get_sync_db_pg),
-    client=Depends(get_ch_client),
-):
-    """Exportar una consulta guardada a CSV, Excel o PDF."""
+def _load_saved_query_for_export(query_id: UUID, user: User, db: Session, client, formato: str):
+    """Carga y ejecuta una saved query para exportar."""
     sq = (
         db.query(SavedQuery)
         .options(joinedload(SavedQuery.data_source))
         .filter(SavedQuery.id == query_id)
         .first()
     )
-    if not sq or not _can_access_saved_query(sq, current_user):
+    if not sq or not _can_access_saved_query(sq, user):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Consulta no encontrada")
 
-    ds = _get_user_datasource(sq.datasource_id, current_user, db)
+    ds = _get_user_datasource(sq.datasource_id, user, db)
+    sq.selected_columns = _ensure_geo_columns(list(sq.selected_columns), ds.columns_def)
     validated_cols = validate_columns(sq.selected_columns, ds.columns_def)
     validate_filters(sq.filters or [], ds.columns_def)
 
+    row_limit = _EXPORT_ROW_LIMITS[formato]
     rows, _ = execute_query(
-        client, ds, validated_cols, sq.filters or [], 0, 2_000_000_000,
+        client, ds, validated_cols, sq.filters or [], 0, row_limit,
         group_by=sq.group_by or None,
         aggregations=sq.aggregations or None,
     )
@@ -651,26 +727,58 @@ def export_saved_query(
     ]
 
     title = sq.name or "Consulta"
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    ext = _EXTENSIONS[formato.value]
     safe_name = "".join(c if c.isalnum() or c in "_- " else "_" for c in title).strip()[:50]
-    filename = f"{safe_name}_{ts}.{ext}"
-    disposition = f'attachment; filename="{filename}"'
+    return rows, columns_meta, title, safe_name
 
-    if formato == ExportFormat.csv:
-        return StreamingResponse(
-            gen_query_csv_stream(rows, columns_meta),
-            media_type=_MEDIA_TYPES["csv"],
-            headers={"Content-Disposition": disposition},
-        )
 
-    if formato == ExportFormat.excel:
-        buf = gen_query_excel(rows, columns_meta, title=title)
-    else:
-        buf = gen_query_pdf(rows, columns_meta, title=title)
+@router.get("/saved/{query_id}/export/csv")
+def export_saved_csv(
+    query_id: UUID,
+    current_user: User = Depends(_query_permission),
+    db: Session = Depends(get_sync_db_pg),
+    client=Depends(get_ch_client),
+):
+    """Exportar consulta guardada a CSV."""
+    rows, columns_meta, _, safe_name = _load_saved_query_for_export(query_id, current_user, db, client, "csv")
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return StreamingResponse(
+        gen_query_csv_stream(rows, columns_meta),
+        media_type=_MEDIA_TYPES["csv"],
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}_{ts}.csv"'},
+    )
 
+
+@router.get("/saved/{query_id}/export/excel")
+def export_saved_excel(
+    query_id: UUID,
+    current_user: User = Depends(_query_permission),
+    db: Session = Depends(get_sync_db_pg),
+    client=Depends(get_ch_client),
+):
+    """Exportar consulta guardada a Excel (ZIP por departamento)."""
+    rows, columns_meta, title, safe_name = _load_saved_query_for_export(query_id, current_user, db, client, "excel")
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    buf = gen_query_excel_zip(rows, columns_meta, title=title)
     return StreamingResponse(
         buf,
-        media_type=_MEDIA_TYPES[formato.value],
-        headers={"Content-Disposition": disposition},
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}_{ts}.zip"'},
+    )
+
+
+@router.get("/saved/{query_id}/export/pdf")
+def export_saved_pdf(
+    query_id: UUID,
+    current_user: User = Depends(_query_permission),
+    db: Session = Depends(get_sync_db_pg),
+    client=Depends(get_ch_client),
+):
+    """Exportar consulta guardada a PDF (ZIP por departamento)."""
+    rows, columns_meta, title, safe_name = _load_saved_query_for_export(query_id, current_user, db, client, "pdf")
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    buf = gen_query_pdf_zip(rows, columns_meta, title=title)
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}_{ts}.zip"'},
     )
