@@ -41,7 +41,13 @@ from api.v1.services.rsh.mappers import (
     row_to_persona,
     row_to_vivienda,
 )
-from api.v1.services.beneficiario.export import generate_csv, generate_excel, generate_pdf
+from api.v1.services.beneficiario.export import (
+    EXCEL_ZIP_THRESHOLD,
+    generate_csv,
+    generate_excel,
+    generate_excel_grouped_zip,
+    generate_pdf,
+)
 from api.v1.services.user_checkpoint import (
     get_user_query_checkpoint,
     upsert_user_query_checkpoint,
@@ -202,8 +208,17 @@ def export_excel(
     filter_kwargs = filters.model_dump(exclude_none=True)
     rows, _ = query_beneficiarios_lista(client, offset=0, limit=10000, **filter_kwargs)
     items = [row_to_beneficiario_resumen(r) for r in rows]
-    buf = generate_excel(items)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    if len(items) > EXCEL_ZIP_THRESHOLD:
+        buf = generate_excel_grouped_zip(items)
+        return StreamingResponse(
+            buf,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="beneficiarios_{ts}.zip"'},
+        )
+
+    buf = generate_excel(items)
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

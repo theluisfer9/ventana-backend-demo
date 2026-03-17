@@ -2,6 +2,8 @@
 Tests para endpoints RSH de beneficiarios con mock ClickHouse.
 """
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
+from zipfile import ZipFile
 import pytest
 from api.v1.models.user_query_checkpoint import UserQueryCheckpoint
 
@@ -354,6 +356,16 @@ class TestExport:
         assert resp.status_code == 200
         assert len(resp.content) > 0
 
+    def test_export_excel_zip_si_supera_umbral(self, authenticated_ch_client, mock_ch):
+        resp = authenticated_ch_client.get(f"{BASE}/export/excel")
+        assert resp.status_code == 200
+        if len(mock_ch.dataset.hogares) > 10000:
+            assert resp.headers["content-type"] == "application/zip"
+            with ZipFile(BytesIO(resp.content)) as zip_file:
+                names = zip_file.namelist()
+                assert len(names) > 1
+                assert all(name.endswith(".xlsx") for name in names)
+
     def test_export_pdf(self, authenticated_ch_client, mock_ch):
         resp = authenticated_ch_client.get(f"{BASE}/export/pdf")
         assert resp.status_code == 200
@@ -417,3 +429,64 @@ class TestMappers:
         assert "radio" in result
         assert "preocupacion_alimentos" in result
         assert isinstance(result["personas_hogar"], int)
+
+
+class TestBeneficiarioExportHelpers:
+    def test_generate_excel_grouped_zip(self):
+        from api.v1.services.beneficiario.export import generate_excel_grouped_zip
+
+        rows = [
+            {
+                "hogar_id": 1,
+                "cui_jefe_hogar": 123,
+                "nombre_completo": "Persona 1",
+                "sexo_jefe_hogar": "M",
+                "departamento": "Guatemala",
+                "departamento_codigo": "01",
+                "municipio": "Guatemala",
+                "lugar_poblado": "Zona 1",
+                "area": "Urbano",
+                "numero_personas": 4,
+                "ipm_gt": 0.5,
+                "ipm_gt_clasificacion": "Pobre",
+                "pmt": 0.4,
+                "pmt_clasificacion": "Pobre",
+            },
+            {
+                "hogar_id": 2,
+                "cui_jefe_hogar": 456,
+                "nombre_completo": "Persona 2",
+                "sexo_jefe_hogar": "F",
+                "departamento": "Guatemala",
+                "departamento_codigo": "01",
+                "municipio": "Mixco",
+                "lugar_poblado": "Zona 2",
+                "area": "Urbano",
+                "numero_personas": 3,
+                "ipm_gt": 0.3,
+                "ipm_gt_clasificacion": "No pobre",
+                "pmt": 0.2,
+                "pmt_clasificacion": "No pobre",
+            },
+            {
+                "hogar_id": 3,
+                "cui_jefe_hogar": 789,
+                "nombre_completo": "Persona 3",
+                "sexo_jefe_hogar": "M",
+                "departamento": "Sacatepequez",
+                "departamento_codigo": "03",
+                "municipio": "Antigua Guatemala",
+                "lugar_poblado": "Centro",
+                "area": "Urbano",
+                "numero_personas": 5,
+                "ipm_gt": 0.6,
+                "ipm_gt_clasificacion": "Pobre",
+                "pmt": 0.5,
+                "pmt_clasificacion": "Pobre",
+            },
+        ]
+
+        buf = generate_excel_grouped_zip(rows)
+        with ZipFile(buf) as zip_file:
+            names = sorted(zip_file.namelist())
+            assert names == ["01_Guatemala.xlsx", "03_Sacatepequez.xlsx"]
