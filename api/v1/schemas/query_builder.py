@@ -41,6 +41,7 @@ class QueryExecuteRequest(BaseModel):
     aggregations: list[Aggregation] = []
     offset: int = 0
     limit: int = 20
+    agrupar: bool = True
 
 
 class ColumnMeta(BaseModel):
@@ -67,6 +68,7 @@ class SavedQueryCreate(BaseModel):
     aggregations: list[Aggregation] = []
     institution_id: Optional[UUID] = None
     is_shared: bool = False
+    agrupar: bool = True
 
 
 class SavedQueryUpdate(BaseModel):
@@ -78,6 +80,7 @@ class SavedQueryUpdate(BaseModel):
     aggregations: Optional[list[Aggregation]] = None
     institution_id: Optional[UUID] = None
     is_shared: Optional[bool] = None
+    agrupar: Optional[bool] = None
 
 
 class SavedQueryOut(BaseModel):
@@ -93,6 +96,7 @@ class SavedQueryOut(BaseModel):
     institution_id: Optional[UUID] = None
     institution_name: Optional[str] = None
     is_shared: bool = False
+    agrupar: bool = True
     created_by: Optional[str] = None
     created_at: str = ""
 
@@ -110,5 +114,6 @@ class SavedQueryListItem(BaseModel):
     has_aggregations: bool = False
     institution_name: Optional[str] = None
     is_shared: bool = False
+    agrupar: bool = True
     created_by: Optional[str] = None
     created_at: str = ""

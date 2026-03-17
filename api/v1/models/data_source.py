@@ -105,6 +105,7 @@ class SavedQuery(BasePG):
         nullable=True,
     )
     is_shared = Column(Boolean, default=False)
+    agrupar = Column(Boolean, default=True, nullable=False, server_default="true")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 

@@ -151,6 +151,79 @@ def generate_excel_zip(rows: list[dict], columns_meta: list[dict], title: str = 
     return zip_buf
 
 
+_CHUNK_SIZE = 10_000
+
+
+def generate_excel_chunked_zip(rows: list[dict], columns_meta: list[dict], title: str = "Consulta") -> BytesIO:
+    """Genera ZIP con excels de max 10K filas cada uno, sin agrupar por geo."""
+    headers = [c["label"] for c in columns_meta]
+    keys = [c["column_name"] for c in columns_meta]
+
+    zip_buf = BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        total_chunks = max(1, (len(rows) + _CHUNK_SIZE - 1) // _CHUNK_SIZE)
+        for chunk_idx in range(total_chunks):
+            start = chunk_idx * _CHUNK_SIZE
+            chunk_rows = rows[start:start + _CHUNK_SIZE]
+
+            wb = Workbook()
+            ws = wb.active
+            ws.title = title[:31]
+            _write_excel_sheet(ws, headers, keys, chunk_rows)
+
+            xlsx_buf = BytesIO()
+            wb.save(xlsx_buf)
+
+            if total_chunks == 1:
+                fname = f"{title}.xlsx"
+            else:
+                fname = f"{title}_parte_{chunk_idx + 1}.xlsx"
+            zf.writestr(fname, xlsx_buf.getvalue())
+
+    zip_buf.seek(0)
+    return zip_buf
+
+
+def generate_pdf_chunked_zip(rows: list[dict], columns_meta: list[dict], title: str = "Consulta") -> BytesIO:
+    """Genera ZIP con PDFs de max 10K filas cada uno, sin agrupar por geo."""
+    headers = [c["label"] for c in columns_meta]
+    keys = [c["column_name"] for c in columns_meta]
+
+    max_cols = min(len(headers), 10)
+    headers = headers[:max_cols]
+    keys = keys[:max_cols]
+
+    col_widths = _calc_col_widths(headers, keys, rows)
+
+    zip_buf = BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        total_chunks = max(1, (len(rows) + _CHUNK_SIZE - 1) // _CHUNK_SIZE)
+        for chunk_idx in range(total_chunks):
+            start = chunk_idx * _CHUNK_SIZE
+            chunk_rows = rows[start:start + _CHUNK_SIZE]
+
+            chunk_title = title if total_chunks == 1 else f"{title} - Parte {chunk_idx + 1}"
+            pdf = _QueryPDF(chunk_title, orientation="L", unit="mm", format="A4")
+            pdf.alias_nb_pages()
+            pdf.set_auto_page_break(auto=True, margin=20)
+            pdf.add_page()
+
+            _write_pdf_table_header(pdf, headers, col_widths)
+            _write_pdf_rows(pdf, keys, col_widths, chunk_rows)
+
+            pdf_buf = BytesIO()
+            pdf.output(pdf_buf)
+
+            if total_chunks == 1:
+                fname = f"{title}.pdf"
+            else:
+                fname = f"{title}_parte_{chunk_idx + 1}.pdf"
+            zf.writestr(fname, pdf_buf.getvalue())
+
+    zip_buf.seek(0)
+    return zip_buf
+
+
 # Mantener la funcion original para uso simple (sin agrupacion)
 def generate_excel(rows: list[dict], columns_meta: list[dict], title: str = "Consulta") -> BytesIO:
     """Genera Excel (.xlsx) simple con estilos, bordes y freeze panes."""

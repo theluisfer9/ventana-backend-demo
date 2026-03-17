@@ -20,8 +20,10 @@ from api.v1.services.query_engine.export import (
     generate_csv_streaming as gen_query_csv_stream,
     generate_excel as gen_query_excel,
     generate_excel_zip as gen_query_excel_zip,
+    generate_excel_chunked_zip as gen_query_excel_chunked_zip,
     generate_pdf as gen_query_pdf,
     generate_pdf_zip as gen_query_pdf_zip,
+    generate_pdf_chunked_zip as gen_query_pdf_chunked_zip,
 )
 from api.v1.auth.permissions import PermissionCode
 
@@ -277,7 +279,7 @@ _MEDIA_TYPES = {
     "pdf": "application/pdf",
 }
 _EXTENSIONS = {"csv": "csv", "excel": "xlsx", "pdf": "pdf"}
-_EXPORT_ROW_LIMITS = {"csv": 2_000_000_000, "excel": 50_000, "pdf": 5_000}
+_EXPORT_ROW_LIMITS = {"csv": 2_000_000_000, "excel": 500_000, "pdf": 50_000}
 
 
 def _execute_export(body: QueryExecuteRequest, user: User, db: Session, client, formato: str):
@@ -334,9 +336,15 @@ def export_adhoc_query(
         )
 
     if formato == ExportFormat.excel:
-        buf = gen_query_excel_zip(rows, columns_meta, title="Consulta")
+        if body.agrupar:
+            buf = gen_query_excel_zip(rows, columns_meta, title="Consulta")
+        else:
+            buf = gen_query_excel_chunked_zip(rows, columns_meta, title="Consulta")
     else:
-        buf = gen_query_pdf_zip(rows, columns_meta, title="Consulta")
+        if body.agrupar:
+            buf = gen_query_pdf_zip(rows, columns_meta, title="Consulta")
+        else:
+            buf = gen_query_pdf_chunked_zip(rows, columns_meta, title="Consulta")
 
     return StreamingResponse(
         buf,
@@ -369,10 +377,13 @@ def export_adhoc_excel(
     db: Session = Depends(get_sync_db_pg),
     client=Depends(get_ch_client),
 ):
-    """Exportar consulta ad-hoc a Excel (ZIP por departamento)."""
+    """Exportar consulta ad-hoc a Excel (ZIP)."""
     rows, columns_meta = _execute_export(body, current_user, db, client, "excel")
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    buf = gen_query_excel_zip(rows, columns_meta, title="Consulta")
+    if body.agrupar:
+        buf = gen_query_excel_zip(rows, columns_meta, title="Consulta")
+    else:
+        buf = gen_query_excel_chunked_zip(rows, columns_meta, title="Consulta")
     return StreamingResponse(
         buf,
         media_type="application/zip",
@@ -387,10 +398,13 @@ def export_adhoc_pdf(
     db: Session = Depends(get_sync_db_pg),
     client=Depends(get_ch_client),
 ):
-    """Exportar consulta ad-hoc a PDF (ZIP por departamento)."""
+    """Exportar consulta ad-hoc a PDF (ZIP)."""
     rows, columns_meta = _execute_export(body, current_user, db, client, "pdf")
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    buf = gen_query_pdf_zip(rows, columns_meta, title="Consulta")
+    if body.agrupar:
+        buf = gen_query_pdf_zip(rows, columns_meta, title="Consulta")
+    else:
+        buf = gen_query_pdf_chunked_zip(rows, columns_meta, title="Consulta")
     return StreamingResponse(
         buf,
         media_type="application/zip",
@@ -728,7 +742,8 @@ def _load_saved_query_for_export(query_id: UUID, user: User, db: Session, client
 
     title = sq.name or "Consulta"
     safe_name = "".join(c if c.isalnum() or c in "_- " else "_" for c in title).strip()[:50]
-    return rows, columns_meta, title, safe_name
+    agrupar = sq.agrupar if sq.agrupar is not None else True
+    return rows, columns_meta, title, safe_name, agrupar
 
 
 @router.get("/saved/{query_id}/export/csv")
@@ -739,7 +754,7 @@ def export_saved_csv(
     client=Depends(get_ch_client),
 ):
     """Exportar consulta guardada a CSV."""
-    rows, columns_meta, _, safe_name = _load_saved_query_for_export(query_id, current_user, db, client, "csv")
+    rows, columns_meta, _, safe_name, _ = _load_saved_query_for_export(query_id, current_user, db, client, "csv")
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     return StreamingResponse(
         gen_query_csv_stream(rows, columns_meta),
@@ -755,10 +770,13 @@ def export_saved_excel(
     db: Session = Depends(get_sync_db_pg),
     client=Depends(get_ch_client),
 ):
-    """Exportar consulta guardada a Excel (ZIP por departamento)."""
-    rows, columns_meta, title, safe_name = _load_saved_query_for_export(query_id, current_user, db, client, "excel")
+    """Exportar consulta guardada a Excel (ZIP)."""
+    rows, columns_meta, title, safe_name, agrupar = _load_saved_query_for_export(query_id, current_user, db, client, "excel")
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    buf = gen_query_excel_zip(rows, columns_meta, title=title)
+    if agrupar:
+        buf = gen_query_excel_zip(rows, columns_meta, title=title)
+    else:
+        buf = gen_query_excel_chunked_zip(rows, columns_meta, title=title)
     return StreamingResponse(
         buf,
         media_type="application/zip",
@@ -773,10 +791,13 @@ def export_saved_pdf(
     db: Session = Depends(get_sync_db_pg),
     client=Depends(get_ch_client),
 ):
-    """Exportar consulta guardada a PDF (ZIP por departamento)."""
-    rows, columns_meta, title, safe_name = _load_saved_query_for_export(query_id, current_user, db, client, "pdf")
+    """Exportar consulta guardada a PDF (ZIP)."""
+    rows, columns_meta, title, safe_name, agrupar = _load_saved_query_for_export(query_id, current_user, db, client, "pdf")
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    buf = gen_query_pdf_zip(rows, columns_meta, title=title)
+    if agrupar:
+        buf = gen_query_pdf_zip(rows, columns_meta, title=title)
+    else:
+        buf = gen_query_pdf_chunked_zip(rows, columns_meta, title=title)
     return StreamingResponse(
         buf,
         media_type="application/zip",
