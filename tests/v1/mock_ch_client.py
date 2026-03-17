@@ -86,6 +86,10 @@ class MockClickHouseClient:
                     return self._handle_detalle(params)
             return self._handle_lista(sql_clean, params)
 
+        # ── Listado municipio/comunidad ──
+        if "pobreza_hogar" in sql_clean and "coalesce(p.lugar_poblado, '') as comunidad" in sql_clean:
+            return self._handle_listado_municipio_comunidad(sql_clean, params)
+
         # ── Detalle de beneficiario ──
         if "pobreza_hogar" in sql_clean and "hogares_datos_demograficos" in sql_clean and "hogar_id" in params:
             return self._handle_detalle(params)
@@ -526,6 +530,58 @@ class MockClickHouseClient:
         row = tuple(merged.get(c) for c in columns)
 
         return MockQueryResult(column_names=columns, result_rows=[row])
+
+    def _handle_listado_municipio_comunidad(self, sql_clean: str, params: dict) -> MockQueryResult:
+        filtered = self._apply_filters(self.dataset.hogares, params, sql_clean)
+
+        columns = [
+            "hogar_id", "departamento", "departamento_codigo",
+            "municipio", "municipio_codigo", "lugar_poblado", "area",
+            "numero_personas", "hombres", "mujeres",
+            "ipm_gt", "ipm_gt_clasificacion", "pmt", "pmt_clasificacion",
+            "nbi", "nbi_clasificacion", "cui_jefe_hogar", "nombre_jefe_hogar",
+            "sexo_jefe_hogar", "lugarpoblado_codigo", "comunidad",
+        ]
+
+        ordered = sorted(
+            filtered,
+            key=lambda h: (
+                h["departamento_codigo"].strip(),
+                h["municipio_codigo"].strip(),
+                (h.get("lugar_poblado") or "").strip(),
+                h["nombre_jefe_hogar"].strip(),
+                h["hogar_id"],
+            ),
+        )
+
+        rows = [
+            (
+                h["hogar_id"],
+                h["departamento"],
+                h["departamento_codigo"],
+                h["municipio"],
+                h["municipio_codigo"],
+                h["lugar_poblado"],
+                h["area"],
+                h["numero_personas"],
+                h["hombres"],
+                h["mujeres"],
+                h["ipm_gt"],
+                h["ipm_gt_clasificacion"],
+                h["pmt"],
+                h["pmt_clasificacion"],
+                h["nbi"],
+                h["nbi_clasificacion"],
+                h["cui_jefe_hogar"],
+                h["nombre_jefe_hogar"],
+                h["sexo_jefe_hogar"],
+                h["lugarpoblado_codigo"],
+                h["lugar_poblado"],
+            )
+            for h in ordered
+        ]
+
+        return MockQueryResult(column_names=columns, result_rows=rows)
 
     def _handle_personas(self, params: dict) -> MockQueryResult:
         hogar_id = params["hogar_id"]

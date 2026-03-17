@@ -274,6 +274,53 @@ def query_beneficiarios_lista(
     return beneficiarios, total
 
 
+def query_listado_municipio_comunidad(client, **filter_kwargs) -> list[dict]:
+    """
+    Obtiene beneficiarios ordenados por departamento, municipio y lugar poblado.
+
+    Esta estructura sirve como base para listados y futuros formatos impresos.
+    """
+    where_clause, params, joins_needed = build_filters(**filter_kwargs)
+    joins = _build_joins(joins_needed)
+
+    query = f"""
+        SELECT
+            p.hogar_id,
+            p.departamento,
+            trim(p.departamento_codigo) as departamento_codigo,
+            p.municipio,
+            trim(p.municipio_codigo) as municipio_codigo,
+            p.lugar_poblado,
+            p.area,
+            p.numero_personas,
+            p.hombres,
+            p.mujeres,
+            p.ipm_gt,
+            p.ipm_gt_clasificacion,
+            p.pmt,
+            p.pmt_clasificacion,
+            p.nbi,
+            p.nbi_clasificacion,
+            p.cui_jefe_hogar,
+            p.nombre_jefe_hogar,
+            trim(p.sexo_jefe_hogar) as sexo_jefe_hogar,
+            trim(p.lugarpoblado_codigo) as lugarpoblado_codigo,
+            coalesce(p.lugar_poblado, '') as comunidad
+        FROM rsh.vw_pobreza_hogars AS p
+        {joins}
+        WHERE {where_clause}
+        ORDER BY
+            p.departamento_codigo,
+            p.municipio_codigo,
+            comunidad,
+            p.nombre_jefe_hogar,
+            p.hogar_id
+    """
+
+    result = client.query(query, parameters=params)
+    return [dict(zip(result.column_names, row)) for row in result.result_rows]
+
+
 def query_beneficiario_detalle(client, hogar_id: int) -> dict | None:
     """
     Consulta detalle completo de un beneficiario con todos los JOINs.

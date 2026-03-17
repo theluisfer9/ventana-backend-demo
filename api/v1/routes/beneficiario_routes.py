@@ -12,6 +12,7 @@ from api.v1.schemas.vivienda import ViviendaDetalle
 from api.v1.schemas.beneficiario import (
     BeneficiarioFilters,
     BeneficiarioDetalle,
+    BeneficiarioListadoComunidadItem,
     BeneficiarioResumen,
     BeneficiarioStats,
     DashboardStats,
@@ -22,10 +23,14 @@ from api.v1.schemas.beneficiario import (
     MunicipioActualizadoItem,
     MunicipiosActualizadosResponse,
     LugarPobladoItem,
+    ComunidadListadoGroup,
+    ListadoMunicipioComunidadResponse,
+    MunicipioListadoGroup,
 )
 from api.v1.services.rsh.queries import (
     query_beneficiarios_lista,
     query_beneficiario_detalle,
+    query_listado_municipio_comunidad,
     query_stats,
     query_dashboard,
     query_catalogos,
@@ -54,6 +59,67 @@ from api.v1.services.user_checkpoint import (
 )
 
 router = APIRouter(prefix="/beneficiarios", tags=["Beneficiarios"])
+
+
+def _build_listado_municipio_comunidad(rows: list[dict]) -> ListadoMunicipioComunidadResponse:
+    municipios: dict[tuple[str, str], dict] = {}
+    total_comunidades = 0
+
+    for row in rows:
+        municipio_key = (str(row.get("departamento_codigo", "")).strip(), str(row.get("municipio_codigo", "")).strip())
+        comunidad = str(row.get("comunidad") or row.get("lugar_poblado") or "").strip()
+
+        if municipio_key not in municipios:
+            municipios[municipio_key] = {
+                "departamento": str(row.get("departamento", "")).strip(),
+                "departamento_codigo": str(row.get("departamento_codigo", "")).strip(),
+                "municipio": str(row.get("municipio", "")).strip(),
+                "municipio_codigo": str(row.get("municipio_codigo", "")).strip(),
+                "comunidades": {},
+            }
+
+        comunidades = municipios[municipio_key]["comunidades"]
+        if comunidad not in comunidades:
+            comunidades[comunidad] = []
+            total_comunidades += 1
+
+        resumen = row_to_beneficiario_resumen(row)
+        comunidades[comunidad].append(BeneficiarioListadoComunidadItem(**resumen, comunidad=comunidad))
+
+    items = []
+    total_beneficiarios = 0
+
+    for municipio in municipios.values():
+        comunidades = []
+        municipio_total = 0
+        for comunidad, beneficiarios in municipio["comunidades"].items():
+            municipio_total += len(beneficiarios)
+            comunidades.append(
+                ComunidadListadoGroup(
+                    comunidad=comunidad,
+                    total_beneficiarios=len(beneficiarios),
+                    beneficiarios=beneficiarios,
+                )
+            )
+
+        total_beneficiarios += municipio_total
+        items.append(
+            MunicipioListadoGroup(
+                departamento=municipio["departamento"],
+                departamento_codigo=municipio["departamento_codigo"],
+                municipio=municipio["municipio"],
+                municipio_codigo=municipio["municipio_codigo"],
+                total_beneficiarios=municipio_total,
+                comunidades=comunidades,
+            )
+        )
+
+    return ListadoMunicipioComunidadResponse(
+        total_municipios=len(items),
+        total_comunidades=total_comunidades,
+        total_beneficiarios=total_beneficiarios,
+        items=items,
+    )
 
 
 @router.get("/catalogos")
@@ -198,6 +264,18 @@ def stats(
     )
 
 
+@router.get("/listado/municipio-comunidad", response_model=ListadoMunicipioComunidadResponse)
+def listado_municipio_comunidad(
+    filters: BeneficiarioFilters = Depends(beneficiario_filters_dep),
+    current_user=Depends(RequirePermission(PermissionCode.BENEFICIARIES_READ)),
+    client=Depends(get_ch_client),
+):
+    """Listado agrupado por municipio y lugar poblado para impresión/exportación."""
+    filter_kwargs = filters.model_dump(exclude_none=True)
+    rows = query_listado_municipio_comunidad(client, **filter_kwargs)
+    return _build_listado_municipio_comunidad(rows)
+
+
 @router.get("/export/excel")
 def export_excel(
     filters: BeneficiarioFilters = Depends(beneficiario_filters_dep),
@@ -253,8 +331,8 @@ def export_pdf(
 ):
     """Exportar beneficiarios filtrados a PDF."""
     filter_kwargs = filters.model_dump(exclude_none=True)
-    rows, _ = query_beneficiarios_lista(client, offset=0, limit=5000, **filter_kwargs)
-    items = [row_to_beneficiario_resumen(r) for r in rows]
+    rows = query_listado_municipio_comunidad(client, **filter_kwargs)
+    items = [row_to_beneficiario_resumen(r) | {"comunidad": r.get("comunidad", "")} for r in rows]
     buf = generate_pdf(items)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     return StreamingResponse(

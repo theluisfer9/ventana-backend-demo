@@ -253,6 +253,36 @@ class TestLista:
         assert "ipm_gt_clasificacion" in item
         assert "numero_personas" in item
 
+    def test_listado_municipio_comunidad(self, authenticated_ch_client, mock_ch):
+        resp = authenticated_ch_client.get(f"{BASE}/listado/municipio-comunidad")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["total_municipios"] > 0
+        assert data["total_comunidades"] > 0
+        assert data["total_beneficiarios"] == len(mock_ch.dataset.hogares)
+
+        municipio = data["items"][0]
+        assert "municipio" in municipio
+        assert "comunidades" in municipio
+        assert municipio["total_beneficiarios"] > 0
+
+        comunidad = municipio["comunidades"][0]
+        assert "comunidad" in comunidad
+        assert "beneficiarios" in comunidad
+        assert comunidad["beneficiarios"][0]["lugar_poblado"] == comunidad["comunidad"]
+
+    def test_listado_municipio_comunidad_con_filtro_municipio(self, authenticated_ch_client, mock_ch):
+        municipio_codigo = mock_ch.dataset.hogares[0]["municipio_codigo"]
+        resp = authenticated_ch_client.get(
+            f"{BASE}/listado/municipio-comunidad",
+            params={"municipio_codigo": municipio_codigo},
+        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["total_municipios"] > 0
+        for municipio in data["items"]:
+            assert municipio["municipio_codigo"] == municipio_codigo
+
 
 # ========================= TestDetalle ==============================
 

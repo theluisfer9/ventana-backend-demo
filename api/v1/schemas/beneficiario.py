@@ -128,6 +128,32 @@ class BeneficiarioResumen(BaseModel):
     nbi_clasificacion: str = ""
 
 
+class BeneficiarioListadoComunidadItem(BeneficiarioResumen):
+    comunidad: str = ""
+
+
+class ComunidadListadoGroup(BaseModel):
+    comunidad: str
+    total_beneficiarios: int
+    beneficiarios: list[BeneficiarioListadoComunidadItem] = []
+
+
+class MunicipioListadoGroup(BaseModel):
+    departamento: str
+    departamento_codigo: str
+    municipio: str
+    municipio_codigo: str
+    total_beneficiarios: int
+    comunidades: list[ComunidadListadoGroup] = []
+
+
+class ListadoMunicipioComunidadResponse(BaseModel):
+    total_municipios: int
+    total_comunidades: int
+    total_beneficiarios: int
+    items: list[MunicipioListadoGroup] = []
+
+
 # ── Beneficiario detalle ──────────────────────────────────────────────
 
 class BeneficiarioDetalle(BeneficiarioResumen):

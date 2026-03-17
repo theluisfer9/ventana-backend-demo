@@ -33,8 +33,6 @@ COLUMNS = [
     "Clasif. PMT",
 ]
 
-# Columnas para PDF (sin PMT por espacio)
-PDF_COLUMNS = COLUMNS[:11]
 EXCEL_ZIP_THRESHOLD = 10_000
 
 
@@ -184,6 +182,16 @@ def _group_rows(rows: list[dict]) -> dict[str, dict[str, list[dict]]]:
     return grouped
 
 
+def _group_rows_for_print(rows: list[dict]) -> dict[str, dict[str, dict[str, list[dict]]]]:
+    grouped: dict[str, dict[str, dict[str, list[dict]]]] = {}
+    for row in rows:
+        depto = (row.get("departamento") or "Sin departamento").strip() or "Sin departamento"
+        muni = (row.get("municipio") or "Sin municipio").strip() or "Sin municipio"
+        comunidad = (row.get("comunidad") or row.get("lugar_poblado") or "Sin comunidad").strip() or "Sin comunidad"
+        grouped.setdefault(depto, {}).setdefault(muni, {}).setdefault(comunidad, []).append(row)
+    return grouped
+
+
 def generate_excel_grouped_zip(rows: list[dict]) -> BytesIO:
     """
     Genera un ZIP con un workbook por departamento y una hoja por municipio.
@@ -230,7 +238,7 @@ class _BeneficiarioPDF(FPDF):
 
     def header(self):
         self.set_font("Helvetica", "B", 14)
-        self.cell(0, 10, "Reporte de Beneficiarios", new_x="LMARGIN", new_y="NEXT", align="C")
+        self.cell(0, 10, "Listado de Beneficiarios por Municipio y Comunidad", new_x="LMARGIN", new_y="NEXT", align="C")
         self.set_font("Helvetica", "", 9)
         self.cell(
             0, 6,
@@ -246,45 +254,55 @@ class _BeneficiarioPDF(FPDF):
 
 
 def generate_pdf(rows: list[dict]) -> BytesIO:
-    """Genera un archivo PDF landscape en memoria."""
-    pdf = _BeneficiarioPDF(orientation="L", unit="mm", format="A4")
+    """Genera un archivo PDF portrait agrupado por municipio y comunidad."""
+    pdf = _BeneficiarioPDF(orientation="P", unit="mm", format="A4")
     pdf.alias_nb_pages()
     pdf.set_auto_page_break(auto=True, margin=20)
     pdf.add_page()
 
-    # Anchos de columna para 11 columnas (landscape A4 ~277mm usable)
-    col_widths = [20, 22, 50, 18, 34, 34, 30, 18, 14, 14, 28]  # total ~282 for 11 cols
+    grouped = _group_rows_for_print(rows)
 
-    # Header de tabla
-    pdf.set_font("Helvetica", "B", 8)
-    pdf.set_fill_color(31, 78, 121)
-    pdf.set_text_color(255, 255, 255)
-    for i, col in enumerate(PDF_COLUMNS):
-        pdf.cell(col_widths[i], 8, col, border=1, fill=True, align="C")
-    pdf.ln()
+    for depto_index, (departamento, municipios) in enumerate(sorted(grouped.items())):
+        if depto_index > 0:
+            pdf.add_page()
 
-    # Datos
-    pdf.set_font("Helvetica", "", 7)
-    pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.set_text_color(31, 78, 121)
+        pdf.cell(0, 8, f"Departamento: {departamento}", new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(1)
 
-    for idx, beneficiario in enumerate(rows):
-        values = _row(beneficiario)
-        # Fila alternada
-        if idx % 2 == 1:
-            pdf.set_fill_color(235, 241, 247)
-            fill = True
-        else:
-            pdf.set_fill_color(255, 255, 255)
-            fill = True
+        for municipio, comunidades in sorted(municipios.items()):
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.set_text_color(55, 55, 55)
+            pdf.cell(0, 7, f"Municipio: {municipio}", new_x="LMARGIN", new_y="NEXT")
 
-        for i in range(len(PDF_COLUMNS)):
-            val = str(values[i]) if values[i] is not None else ""
-            # Truncar si es muy largo
-            if len(val) > 35:
-                val = val[:32] + "..."
-            align = "C" if i in (0, 3, 7, 8, 9, 10) else "L"
-            pdf.cell(col_widths[i], 7, val, border=1, fill=fill, align=align)
-        pdf.ln()
+            for comunidad, beneficiarios in sorted(comunidades.items()):
+                pdf.set_font("Helvetica", "B", 9)
+                pdf.set_text_color(0, 0, 0)
+                pdf.cell(
+                    0,
+                    6,
+                    f"Comunidad: {comunidad} ({len(beneficiarios)} beneficiarios)",
+                    new_x="LMARGIN",
+                    new_y="NEXT",
+                )
+
+                pdf.set_font("Helvetica", "", 8)
+                for idx, beneficiario in enumerate(beneficiarios, start=1):
+                    nombre = (beneficiario.get("nombre_completo") or "").strip() or "Sin nombre"
+                    hogar_id = beneficiario.get("hogar_id", "")
+                    cui = beneficiario.get("cui_jefe_hogar", "")
+                    personas = beneficiario.get("numero_personas", 0)
+                    area = (beneficiario.get("area") or "").strip()
+                    ipm = round(beneficiario.get("ipm_gt", 0) or 0, 4)
+
+                    line = (
+                        f"{idx}. Hogar {hogar_id} | CUI {cui} | {nombre} | "
+                        f"Personas: {personas} | Area: {area} | IPM: {ipm}"
+                    )
+                    pdf.multi_cell(pdf.epw, 5, line, new_x="LMARGIN", new_y="NEXT")
+
+                pdf.ln(2)
 
     buf = BytesIO()
     pdf.output(buf)
