@@ -59,6 +59,7 @@ from api.v1.services.user_checkpoint import (
 )
 
 router = APIRouter(prefix="/beneficiarios", tags=["Beneficiarios"])
+PDF_EXPORT_LIMIT = 5000
 
 
 def _build_listado_municipio_comunidad(rows: list[dict]) -> ListadoMunicipioComunidadResponse:
@@ -331,7 +332,7 @@ def export_pdf(
 ):
     """Exportar beneficiarios filtrados a PDF."""
     filter_kwargs = filters.model_dump(exclude_none=True)
-    rows = query_listado_municipio_comunidad(client, **filter_kwargs)
+    rows = query_listado_municipio_comunidad(client, limit=PDF_EXPORT_LIMIT, **filter_kwargs)
     items = [row_to_beneficiario_resumen(r) | {"comunidad": r.get("comunidad", "")} for r in rows]
     buf = generate_pdf(items)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")

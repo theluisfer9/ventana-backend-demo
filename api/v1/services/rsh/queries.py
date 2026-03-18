@@ -274,7 +274,7 @@ def query_beneficiarios_lista(
     return beneficiarios, total
 
 
-def query_listado_municipio_comunidad(client, **filter_kwargs) -> list[dict]:
+def query_listado_municipio_comunidad(client, limit: int | None = None, **filter_kwargs) -> list[dict]:
     """
     Obtiene beneficiarios ordenados por departamento, municipio y lugar poblado.
 
@@ -282,6 +282,8 @@ def query_listado_municipio_comunidad(client, **filter_kwargs) -> list[dict]:
     """
     where_clause, params, joins_needed = build_filters(**filter_kwargs)
     joins = _build_joins(joins_needed)
+
+    limit_clause = f"\n        LIMIT {int(limit)}" if limit is not None else ""
 
     query = f"""
         SELECT
@@ -315,6 +317,7 @@ def query_listado_municipio_comunidad(client, **filter_kwargs) -> list[dict]:
             comunidad,
             p.nombre_jefe_hogar,
             p.hogar_id
+        {limit_clause}
     """
 
     result = client.query(query, parameters=params)
