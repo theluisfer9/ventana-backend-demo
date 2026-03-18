@@ -27,6 +27,7 @@ PERMISSIONS = {
     "beneficiaries:export": {"name": "Exportar beneficiarios", "module": "beneficiaries"},
     "databases:read": {"name": "Ver integraciones", "module": "databases"},
     "databases:manage": {"name": "Gestionar integraciones", "module": "databases"},
+    "datasources:manage": {"name": "Gestionar fuentes de datos", "module": "datasources"},
     "reports:read": {"name": "Ver reportes", "module": "reports"},
     "reports:advanced": {"name": "Reportes avanzados", "module": "reports"},
     "reports:create": {"name": "Crear reportes", "module": "reports"},

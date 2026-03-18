@@ -35,6 +35,7 @@ PERMISSIONS = {
     # Databases
     "databases:read": {"name": "Ver integraciones", "module": "databases"},
     "databases:manage": {"name": "Gestionar integraciones", "module": "databases"},
+    "datasources:manage": {"name": "Gestionar fuentes de datos", "module": "datasources"},
     # Reports
     "reports:read": {"name": "Ver reportes", "module": "reports"},
     "reports:advanced": {"name": "Reportes avanzados", "module": "reports"},
