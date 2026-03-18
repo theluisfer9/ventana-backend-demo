@@ -173,6 +173,38 @@ class TestExecuteQuery:
         resp = self._execute(authenticated_admin_client, uuid4(), ["hogar_id"])
         assert resp.status_code == 404
 
+    def test_execute_with_agrupar_false_does_not_inject_geo_columns(
+        self,
+        authenticated_admin_client,
+        db_session,
+        test_institution,
+    ):
+        ds = _seed_datasource(db_session, institution_id=test_institution.id)
+        mock_ch = _mock_ch_client(
+            count=1,
+            rows=[[1]],
+            col_names=["hogar_id"],
+        )
+
+        def override_ch():
+            yield mock_ch
+
+        app.dependency_overrides[get_ch_client] = override_ch
+        try:
+            resp = authenticated_admin_client.post("/api/v1/queries/execute", json={
+                "datasource_id": str(ds.id),
+                "columns": ["hogar_id"],
+                "filters": [],
+                "offset": 0,
+                "limit": 10,
+                "agrupar": False,
+            })
+            assert resp.status_code == 200
+            data = resp.json()["data"]
+            assert [c["column_name"] for c in data["columns_meta"]] == ["hogar_id"]
+        finally:
+            app.dependency_overrides.pop(get_ch_client, None)
+
 
 # ==================== Save / List / Get / Delete Queries ====================
 
@@ -193,6 +225,24 @@ class TestSavedQueries:
         assert data["name"] == "Mi Consulta"
         assert "id" in data
 
+    def test_save_query_persists_agrupar(self, authenticated_admin_client, db_session, test_institution):
+        ds = _seed_datasource(db_session, institution_id=test_institution.id)
+        resp = authenticated_admin_client.post("/api/v1/queries/saved", json={
+            "datasource_id": str(ds.id),
+            "name": "Sin agrupar",
+            "selected_columns": ["hogar_id"],
+            "filters": [],
+            "agrupar": False,
+        })
+        assert resp.status_code == 201
+        query_id = resp.json()["data"]["id"]
+
+        get_resp = authenticated_admin_client.get(f"/api/v1/queries/saved/{query_id}")
+        assert get_resp.status_code == 200
+        data = get_resp.json()["data"]
+        assert data["agrupar"] is False
+        assert data["selected_columns"] == ["hogar_id"]
+
     def test_list_saved_queries(self, authenticated_admin_client, db_session, test_institution):
         ds = _seed_datasource(db_session, institution_id=test_institution.id)
         self._save_query(authenticated_admin_client, ds.id, name="Query A")
@@ -204,6 +254,7 @@ class TestSavedQueries:
         names = [q["name"] for q in items]
         assert "Query A" in names
         assert "Query B" in names
+        assert all("agrupar" in q for q in items)
 
     def test_get_saved_query(self, authenticated_admin_client, db_session, test_institution):
         ds = _seed_datasource(db_session, institution_id=test_institution.id)
@@ -215,6 +266,7 @@ class TestSavedQueries:
         assert data["name"] == "Mi Consulta"
         assert data["selected_columns"] == ["hogar_id", "departamento"]
         assert len(data["filters"]) == 1
+        assert data["agrupar"] is True
 
     def test_get_nonexistent_saved_query_returns_404(self, authenticated_admin_client):
         resp = authenticated_admin_client.get(f"/api/v1/queries/saved/{uuid4()}")
@@ -233,6 +285,20 @@ class TestSavedQueries:
     def test_delete_nonexistent_returns_404(self, authenticated_admin_client):
         resp = authenticated_admin_client.delete(f"/api/v1/queries/saved/{uuid4()}")
         assert resp.status_code == 404
+
+    def test_update_saved_query_persists_agrupar(self, authenticated_admin_client, db_session, test_institution):
+        ds = _seed_datasource(db_session, institution_id=test_institution.id)
+        save_resp = self._save_query(authenticated_admin_client, ds.id)
+        query_id = save_resp.json()["data"]["id"]
+
+        resp = authenticated_admin_client.put(f"/api/v1/queries/saved/{query_id}", json={
+            "agrupar": False,
+            "selected_columns": ["hogar_id"],
+        })
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["agrupar"] is False
+        assert data["selected_columns"] == ["hogar_id"]
 
     def test_save_with_invalid_column_returns_400(self, authenticated_admin_client, db_session, test_institution):
         ds = _seed_datasource(db_session, institution_id=test_institution.id)

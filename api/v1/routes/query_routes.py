@@ -242,7 +242,13 @@ def execute_adhoc_query(
     client=Depends(get_ch_client),
 ):
     ds = _get_user_datasource(body.datasource_id, current_user, db)
-    body.columns = _ensure_geo_columns(body.columns, ds.columns_def)
+    if not body.columns:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Debe seleccionar al menos una columna",
+        )
+    if body.agrupar:
+        body.columns = _ensure_geo_columns(body.columns, ds.columns_def)
     validated_cols = validate_columns(body.columns, ds.columns_def)
     filters_dicts = [f.model_dump() for f in body.filters]
     validate_filters(filters_dicts, ds.columns_def)
@@ -419,7 +425,13 @@ def save_query(
     db: Session = Depends(get_sync_db_pg),
 ):
     ds = _get_user_datasource(body.datasource_id, current_user, db)
-    body.selected_columns = _ensure_geo_columns(body.selected_columns, ds.columns_def)
+    if not body.selected_columns:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Debe seleccionar al menos una columna",
+        )
+    if body.agrupar:
+        body.selected_columns = _ensure_geo_columns(body.selected_columns, ds.columns_def)
     validate_columns(body.selected_columns, ds.columns_def)
     filters_dicts = [f.model_dump() for f in body.filters]
     validate_filters(filters_dicts, ds.columns_def)
@@ -453,6 +465,7 @@ def save_query(
         aggregations=agg_dicts,
         institution_id=institution_id,
         is_shared=is_shared,
+        agrupar=body.agrupar,
     )
     db.add(sq)
     db.commit()
@@ -511,6 +524,7 @@ def list_saved_queries(
             has_aggregations=bool(sq.aggregations),
             institution_name=sq.institution.name if sq.institution else None,
             is_shared=sq.is_shared or False,
+            agrupar=sq.agrupar,
             created_by=sq.user.full_name if sq.user else None,
             created_at=sq.created_at.isoformat() if sq.created_at else "",
         )
@@ -549,6 +563,7 @@ def get_saved_query(
         institution_id=sq.institution_id,
         institution_name=sq.institution.name if sq.institution else None,
         is_shared=sq.is_shared or False,
+        agrupar=sq.agrupar,
         created_by=sq.user.full_name if sq.user else None,
         created_at=sq.created_at.isoformat() if sq.created_at else "",
     )
@@ -586,6 +601,13 @@ def update_saved_query(
     if body.selected_columns is not None or body.filters is not None or body.group_by is not None or body.aggregations is not None:
         ds = _get_user_datasource(sq.datasource_id, current_user, db)
         if body.selected_columns is not None:
+            if not body.selected_columns:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Debe seleccionar al menos una columna",
+                )
+            if body.agrupar is True or (body.agrupar is None and sq.agrupar):
+                body.selected_columns = _ensure_geo_columns(body.selected_columns, ds.columns_def)
             validate_columns(body.selected_columns, ds.columns_def)
         if body.filters is not None:
             filters_dicts = [f.model_dump() for f in body.filters]
@@ -643,6 +665,7 @@ def update_saved_query(
         institution_id=sq.institution_id,
         institution_name=sq.institution.name if sq.institution else None,
         is_shared=sq.is_shared or False,
+        agrupar=sq.agrupar,
         created_by=sq.user.full_name if sq.user else None,
         created_at=sq.created_at.isoformat() if sq.created_at else "",
     )
@@ -692,8 +715,10 @@ def execute_saved_query(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Consulta no encontrada")
 
     ds = _get_user_datasource(sq.datasource_id, current_user, db)
-    sq.selected_columns = _ensure_geo_columns(list(sq.selected_columns), ds.columns_def)
-    validated_cols = validate_columns(sq.selected_columns, ds.columns_def)
+    selected_columns = list(sq.selected_columns)
+    if sq.agrupar:
+        selected_columns = _ensure_geo_columns(selected_columns, ds.columns_def)
+    validated_cols = validate_columns(selected_columns, ds.columns_def)
     validate_filters(sq.filters or [], ds.columns_def)
 
     rows, total = execute_query(
@@ -724,8 +749,10 @@ def _load_saved_query_for_export(query_id: UUID, user: User, db: Session, client
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Consulta no encontrada")
 
     ds = _get_user_datasource(sq.datasource_id, user, db)
-    sq.selected_columns = _ensure_geo_columns(list(sq.selected_columns), ds.columns_def)
-    validated_cols = validate_columns(sq.selected_columns, ds.columns_def)
+    selected_columns = list(sq.selected_columns)
+    if sq.agrupar:
+        selected_columns = _ensure_geo_columns(selected_columns, ds.columns_def)
+    validated_cols = validate_columns(selected_columns, ds.columns_def)
     validate_filters(sq.filters or [], ds.columns_def)
 
     row_limit = _EXPORT_ROW_LIMITS[formato]
