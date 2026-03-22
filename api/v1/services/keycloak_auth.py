@@ -102,17 +102,29 @@ def verify_keycloak_token(token: str) -> dict[str, Any] | None:
         return None
 
     audience = KEYCLOAK_AUDIENCE or KEYCLOAK_CLIENT_ID
-
-    options = {"verify_aud": KEYCLOAK_VERIFY_AUDIENCE}
+    options = {"verify_aud": False}
     try:
-        return jwt.decode(
+        payload = jwt.decode(
             token,
             jwk_key,
             algorithms=["RS256"],
             issuer=get_keycloak_issuer(),
-            audience=audience if KEYCLOAK_VERIFY_AUDIENCE else None,
             options=options,
         )
+        if KEYCLOAK_VERIFY_AUDIENCE:
+            aud = payload.get("aud")
+            azp = payload.get("azp")
+
+            aud_values: list[str] = []
+            if isinstance(aud, str):
+                aud_values = [aud]
+            elif isinstance(aud, list):
+                aud_values = [str(value) for value in aud]
+
+            if audience not in aud_values and azp != audience:
+                return None
+
+        return payload
     except JWTError:
         return None
 
