@@ -130,7 +130,11 @@ def verify_keycloak_token(token: str) -> dict[str, Any] | None:
 
 
 def extract_keycloak_identity(payload: dict[str, Any]) -> KeycloakIdentity | None:
-    subject = payload.get("sub")
+    subject = (
+        payload.get("sub")
+        or payload.get("preferred_username")
+        or payload.get("email")
+    )
     if not subject:
         return None
 
