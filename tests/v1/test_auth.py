@@ -400,6 +400,66 @@ class TestAuthRoutes:
         assert "permissions" in data
         assert "users:read" in data["permissions"]
 
+    @patch("api.v1.dependencies.auth_dependency.verify_token")
+    @patch("api.v1.dependencies.auth_dependency.verify_keycloak_token")
+    def test_get_profile_success_with_keycloak_token(
+        self,
+        mock_verify_keycloak_token,
+        mock_verify_token,
+        client,
+        db_session,
+        test_admin_user,
+    ):
+        """A valid Keycloak token should resolve to a linked local user."""
+        mock_verify_token.return_value = None
+        mock_verify_keycloak_token.return_value = {
+            "sub": "kc-sub-123",
+            "email": test_admin_user.email,
+            "preferred_username": "devadmin",
+            "given_name": "Admin",
+            "family_name": "User",
+            "name": "Admin User",
+        }
+
+        response = client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": "Bearer keycloak-access-token"},
+        )
+
+        assert response.status_code == 200
+        data = response.json().get("data", response.json())
+        assert data["email"] == test_admin_user.email
+        db_session.refresh(test_admin_user)
+        assert test_admin_user.keycloak_id == "kc-sub-123"
+
+    @patch("api.v1.dependencies.auth_dependency.verify_token")
+    @patch("api.v1.dependencies.auth_dependency.verify_keycloak_token")
+    def test_get_profile_rejects_keycloak_user_without_local_account(
+        self,
+        mock_verify_keycloak_token,
+        mock_verify_token,
+        client,
+    ):
+        """SSO users must still exist in the local platform authorization model."""
+        mock_verify_token.return_value = None
+        mock_verify_keycloak_token.return_value = {
+            "sub": "kc-sub-missing",
+            "email": "missing@test.com",
+            "preferred_username": "missing",
+            "given_name": "Missing",
+            "family_name": "User",
+            "name": "Missing User",
+        }
+
+        response = client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": "Bearer keycloak-access-token"},
+        )
+
+        assert response.status_code == 403
+        detail = response.json().get("detail", response.json().get("message", ""))
+        assert "sso" in detail.lower() or "autorizado" in detail.lower()
+
     def test_update_profile_success(self, authenticated_admin_client, test_admin_user):
         """Test updating current user profile"""
         update_data = {

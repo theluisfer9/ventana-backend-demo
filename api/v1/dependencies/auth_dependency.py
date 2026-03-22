@@ -8,6 +8,11 @@ from api.v1.config.database import get_sync_db_pg
 from api.v1.models.user import User
 from api.v1.models.user_session import UserSession
 from api.v1.auth.jwt_handler import verify_token
+from api.v1.services.keycloak_auth import (
+    extract_keycloak_identity,
+    verify_keycloak_token,
+)
+from api.v1.services.auth_identity import resolve_user_from_keycloak_identity
 
 # HTTP Bearer scheme for JWT
 security = HTTPBearer()
@@ -49,22 +54,29 @@ def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    # Verify token
     payload = verify_token(token, token_type="access")
-    if payload is None:
-        raise credentials_exception
+    user = None
 
-    user_id = payload.get("sub")
-    if user_id is None:
-        raise credentials_exception
+    if payload is not None:
+        user_id = payload.get("sub")
+        if user_id is not None and _resolve_active_session(db, payload) is not None:
+            user = db.get(User, user_id)
 
-    if _resolve_active_session(db, payload) is None:
-        raise credentials_exception
-
-    # Get user from database
-    user = db.get(User, user_id)
     if user is None:
-        raise credentials_exception
+        kc_payload = verify_keycloak_token(token)
+        if kc_payload is None:
+            raise credentials_exception
+
+        identity = extract_keycloak_identity(kc_payload)
+        if identity is None:
+            raise credentials_exception
+
+        user = resolve_user_from_keycloak_identity(db, identity)
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Usuario autenticado en SSO pero no autorizado en la plataforma",
+            )
 
     if not user.is_active:
         raise HTTPException(
@@ -103,17 +115,21 @@ def get_optional_current_user(
 
     token = auth_header.replace("Bearer ", "")
     payload = verify_token(token, token_type="access")
-    if payload is None:
-        return None
+    user = None
+    if payload is not None:
+        user_id = payload.get("sub")
+        if user_id is not None and _resolve_active_session(db, payload) is not None:
+            user = db.get(User, user_id)
 
-    user_id = payload.get("sub")
-    if user_id is None:
-        return None
+    if user is None:
+        kc_payload = verify_keycloak_token(token)
+        if kc_payload is None:
+            return None
+        identity = extract_keycloak_identity(kc_payload)
+        if identity is None:
+            return None
+        user = resolve_user_from_keycloak_identity(db, identity)
 
-    if _resolve_active_session(db, payload) is None:
-        return None
-
-    user = db.get(User, user_id)
     if user is None or not user.is_active:
         return None
 
