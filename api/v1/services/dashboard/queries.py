@@ -81,6 +81,20 @@ def query_institutional_pg_stats(db: Session, institution_id) -> dict:
 
 # ── ClickHouse queries ───────────────────────────────────────────────
 
+def _row_dict(result) -> dict:
+    if not getattr(result, "result_rows", None):
+        return {}
+    return dict(zip(result.column_names, result.result_rows[0]))
+
+
+def _first_value(result, default=0):
+    if not getattr(result, "result_rows", None):
+        return default
+    row = result.result_rows[0]
+    if not row:
+        return default
+    return row[0]
+
 def query_rsh_global_stats(client) -> dict:
     """Estadisticas globales RSH desde ClickHouse."""
     # Stats generales
@@ -97,14 +111,14 @@ def query_rsh_global_stats(client) -> dict:
             sum(mujeres) as total_mujeres
         FROM rsh.vw_pobreza_hogars
     """)
-    stats = dict(zip(r.column_names, r.result_rows[0]))
+    stats = _row_dict(r)
 
     # Total personas distintas por CUI
     r_personas = client.query("""
         SELECT count(DISTINCT pd4_numero_documento_identificacion) as total_personas
         FROM rsh.vw_beneficios_x_persona
     """)
-    stats["total_personas"] = r_personas.result_rows[0][0]
+    stats["total_personas"] = _first_value(r_personas, 0)
 
     # Municipios finalizados vs en progreso
     r2 = client.query("""
@@ -120,7 +134,7 @@ def query_rsh_global_stats(client) -> dict:
             GROUP BY municipio_codigo
         )
     """)
-    muni_stats = dict(zip(r2.column_names, r2.result_rows[0]))
+    muni_stats = _row_dict(r2)
     stats["municipios_finalizados"] = muni_stats.get("finalizados", 0)
     stats["municipios_en_progreso"] = muni_stats.get("en_progreso", 0)
 
@@ -207,7 +221,7 @@ def query_rsh_global_stats(client) -> dict:
         FROM rsh.vw_beneficios_x_persona AS p
         INNER JOIN rsh.vw_beneficios_x_hogar AS h ON p.hogar_id = h.hogar_id
     """)
-    benef_row = dict(zip(r6.column_names, r6.result_rows[0]))
+    benef_row = _row_dict(r6)
     stats["beneficiarios_por_institucion"] = benef_row
 
     return stats
@@ -245,7 +259,7 @@ def query_rsh_institutional_stats(client, base_filter_columns: list[str], base_f
         FROM rsh.vw_beneficios_x_hogar
         WHERE {where}{depto_filter}
     """, parameters=depto_params)
-    stats = dict(zip(r.column_names, r.result_rows[0]))
+    stats = _row_dict(r)
 
     # Total personas distintas por CUI
     r_personas = client.query(f"""
@@ -254,7 +268,7 @@ def query_rsh_institutional_stats(client, base_filter_columns: list[str], base_f
         INNER JOIN rsh.vw_beneficios_x_hogar AS h ON p.hogar_id = h.hogar_id
         WHERE {where}{depto_filter}
     """, parameters=depto_params)
-    stats["total_personas"] = r_personas.result_rows[0][0]
+    stats["total_personas"] = _first_value(r_personas, 0)
 
     # Municipios estado - join con pobreza_hogars para fase_estado
     r2 = client.query(f"""
@@ -271,7 +285,7 @@ def query_rsh_institutional_stats(client, base_filter_columns: list[str], base_f
             GROUP BY municipio_codigo
         )
     """, parameters=depto_params)
-    muni_stats = dict(zip(r2.column_names, r2.result_rows[0]))
+    muni_stats = _row_dict(r2)
     stats["municipios_finalizados"] = muni_stats.get("finalizados", 0)
     stats["municipios_en_progreso"] = muni_stats.get("en_progreso", 0)
 
@@ -359,7 +373,7 @@ def query_rsh_institutional_stats(client, base_filter_columns: list[str], base_f
             FROM rsh.vw_beneficios_x_hogar
             WHERE {where}{depto_filter}
         """, parameters=depto_params)
-        stats["bonos"] = dict(zip(r6.column_names, r6.result_rows[0]))
+        stats["bonos"] = _row_dict(r6)
 
         # Bonos por departamento (con filtro de depto si aplica)
         r7 = client.query(f"""

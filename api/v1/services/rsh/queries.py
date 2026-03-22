@@ -420,8 +420,8 @@ def query_stats(client, **filter_kwargs) -> dict:
         SELECT
             count() as total_hogares,
             round(avg(p.ipm_gt), 4) as ipm_promedio,
-            countIf(trim(p.sexo_jefe_hogar) = 'F') as hogares_jefatura_femenina,
-            countIf(trim(p.sexo_jefe_hogar) = 'M') as hogares_jefatura_masculina,
+            countIf(trim(p.sexo_jefe_hogar) IN ('F', '2')) as hogares_jefatura_femenina,
+            countIf(trim(p.sexo_jefe_hogar) IN ('M', '1')) as hogares_jefatura_masculina,
             sum(p.numero_personas) as total_personas,
             sum(p.hombres) as total_hombres,
             sum(p.mujeres) as total_mujeres
