@@ -22,6 +22,7 @@ class AuditEventOut(BaseModel):
     request_path: str | None = None
     query_params: dict[str, Any]
     payload_summary: dict[str, Any]
+    summary_text: str | None = None
     result_count: int | None = None
     status: str
     created_at: datetime

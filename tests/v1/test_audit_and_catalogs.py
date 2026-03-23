@@ -98,6 +98,80 @@ class TestAuditEvents:
             assert items[0]["action"] == "execute"
             assert items[0]["result_count"] == 2
             assert items[0]["resource_label"] == "Datasource: Query Test DS"
+            assert items[0]["summary_text"] == (
+                "Consulta en Query Test DS con 2 columnas, 0 filtros y 2 registros"
+            )
+            assert items[0]["payload_summary"]["datasource_name"] == "Query Test DS"
+            assert items[0]["payload_summary"]["selected_columns"] == [
+                "hogar_id",
+                "departamento",
+            ]
+            assert items[0]["payload_summary"]["filters"] == []
+            assert items[0]["payload_summary"]["group_by"] == []
+            assert items[0]["payload_summary"]["aggregations"] == []
+            assert items[0]["payload_summary"]["agrupar"] is True
+        finally:
+            app.dependency_overrides.pop(get_ch_client, None)
+
+    def test_saved_query_export_registers_rich_audit_event(
+        self,
+        authenticated_admin_client,
+        db_session,
+        test_institution,
+    ):
+        from tests.v1.test_query_routes import _seed_datasource
+
+        datasource = _seed_datasource(db_session, institution_id=test_institution.id)
+        save_response = authenticated_admin_client.post(
+            "/api/v1/queries/saved",
+            json={
+                "datasource_id": str(datasource.id),
+                "name": "Hogares FODES",
+                "selected_columns": ["hogar_id", "departamento"],
+                "filters": [
+                    {"column": "departamento", "op": "eq", "value": "01"},
+                ],
+                "agrupar": False,
+            },
+        )
+        assert save_response.status_code == 201
+        query_id = save_response.json()["data"]["id"]
+
+        mock_ch = _mock_query_builder_ch_client()
+
+        def override_ch():
+            yield mock_ch
+
+        app.dependency_overrides[get_ch_client] = override_ch
+        try:
+            response = authenticated_admin_client.get(
+                f"/api/v1/queries/saved/{query_id}/export/pdf",
+            )
+            assert response.status_code == 200
+
+            audit_response = authenticated_admin_client.get(
+                "/api/v1/audit-events/",
+                params={"module": "query_builder", "event_type": "export"},
+            )
+            assert audit_response.status_code == 200
+            items = audit_response.json()["data"]
+            assert len(items) == 1
+            assert items[0]["action"] == "export_pdf"
+            assert items[0]["summary_text"] == (
+                'Exportación PDF de "Hogares FODES" sobre Query Test DS con 2 registros'
+            )
+            assert items[0]["result_count"] == 2
+            assert items[0]["payload_summary"]["format"] == "pdf"
+            assert items[0]["payload_summary"]["query_name"] == "Hogares FODES"
+            assert items[0]["payload_summary"]["datasource_name"] == "Query Test DS"
+            assert items[0]["payload_summary"]["filters"] == [
+                {"column": "departamento", "op": "eq", "value": "01"},
+            ]
+            assert items[0]["payload_summary"]["selected_columns"] == [
+                "hogar_id",
+                "departamento",
+            ]
+            assert items[0]["payload_summary"]["agrupar"] is False
         finally:
             app.dependency_overrides.pop(get_ch_client, None)
 

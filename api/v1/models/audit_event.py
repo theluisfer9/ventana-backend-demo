@@ -33,6 +33,7 @@ class AuditEvent(BasePG):
     request_path = Column(Text, nullable=True)
     query_params = Column(JSONB, nullable=False, default=dict, server_default="{}")
     payload_summary = Column(JSONB, nullable=False, default=dict, server_default="{}")
+    summary_text = Column(Text, nullable=True)
     result_count = Column(Integer, nullable=True)
     status = Column(String(20), nullable=False, default="success", server_default="success")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
