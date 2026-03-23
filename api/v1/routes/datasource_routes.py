@@ -61,6 +61,7 @@ def create_datasource(
     body: DataSourceCreate,
     current_user: User = Depends(RequirePermission(PermissionCode.DATASOURCES_MANAGE)),
     db: Session = Depends(get_sync_db_pg),
+    ch_client=Depends(get_ch_client),
 ):
     existing = db.query(DataSource).filter(DataSource.code == body.code).first()
     if existing:
@@ -69,6 +70,33 @@ def create_datasource(
     db.add(ds)
     db.commit()
     db.refresh(ds)
+
+    # Auto-discover columns from ClickHouse
+    try:
+        safe_table = _safe_identifier(ds.ch_table)
+        result = ch_client.query(f"DESCRIBE TABLE {safe_table}")
+        for i, row in enumerate(result.result_rows):
+            col_name, ch_type = row[0], row[1]
+            data_type = _map_ch_type(ch_type)
+            category = _guess_category(col_name, data_type)
+            col = DataSourceColumn(
+                datasource_id=ds.id,
+                column_name=col_name,
+                label=_make_label(col_name),
+                data_type=data_type,
+                category=category,
+                is_selectable=True,
+                is_filterable=True,
+                is_groupable=(category in (ColumnCategory.DIMENSION, ColumnCategory.GEO, ColumnCategory.INTERVENTION)),
+                display_order=i,
+            )
+            db.add(col)
+        db.commit()
+    except Exception:
+        pass  # columns can be added later via auto-discover
+
+    # Reload with columns to build correct response
+    ds = _get_datasource(ds.id, db)
     return _datasource_to_out(ds)
 
 

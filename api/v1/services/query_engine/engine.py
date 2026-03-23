@@ -189,3 +189,50 @@ def execute_query(
     ]
 
     return rows, total
+
+
+def execute_query_export(
+    client,
+    ds: DataSource,
+    columns: list[DataSourceColumn],
+    filters: list[dict],
+    limit: int,
+    group_by: list[str] | None = None,
+    aggregations: list[dict] | None = None,
+) -> list[dict]:
+    """Optimized query for exports: skips count(), returns rows only."""
+    col_map = {c.column_name: c for c in ds.columns_def}
+    table_name = _safe_identifier(ds.ch_table)
+    where_clause, params = build_where(
+        ds.base_filter_columns, ds.base_filter_logic, filters, col_map
+    )
+
+    params["_limit"] = limit
+
+    if group_by and aggregations:
+        group_cols = [col_map[name] for name in group_by if name in col_map]
+        select_clause = build_select_grouped(group_cols, aggregations)
+        group_clause = build_group_by(group_by)
+        order_col = _safe_identifier(group_by[0])
+        data_sql = (
+            f"SELECT {select_clause} FROM {table_name} "
+            f"WHERE {where_clause} "
+            f"GROUP BY {group_clause} "
+            f"ORDER BY {order_col} "
+            f"LIMIT {{_limit:Int32}}"
+        )
+    else:
+        select_clause = build_select(columns)
+        order_col = _safe_identifier(columns[0].column_name)
+        data_sql = (
+            f"SELECT {select_clause} FROM {table_name} "
+            f"WHERE {where_clause} "
+            f"ORDER BY {order_col} "
+            f"LIMIT {{_limit:Int32}}"
+        )
+
+    data_result = client.query(data_sql, parameters=params)
+    return [
+        dict(zip(data_result.column_names, row))
+        for row in data_result.result_rows
+    ]

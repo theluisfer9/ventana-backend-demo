@@ -15,7 +15,7 @@ from api.v1.schemas.query_builder import (
     SavedQueryCreate, SavedQueryUpdate, SavedQueryOut, SavedQueryListItem,
 )
 from api.v1.services.query_engine.validators import validate_columns, validate_filters, validate_group_by, validate_aggregations
-from api.v1.services.query_engine.engine import execute_query
+from api.v1.services.query_engine.engine import execute_query, execute_query_export
 from api.v1.services.query_engine.export import (
     generate_csv_streaming as gen_query_csv_stream,
     generate_excel as gen_query_excel,
@@ -285,7 +285,7 @@ _MEDIA_TYPES = {
     "pdf": "application/pdf",
 }
 _EXTENSIONS = {"csv": "csv", "excel": "xlsx", "pdf": "pdf"}
-_EXPORT_ROW_LIMITS = {"csv": 2_000_000_000, "excel": 500_000, "pdf": 50_000}
+_EXPORT_ROW_LIMITS = {"csv": 2_000_000_000, "excel": 1_000_000, "pdf": 50_000}
 
 
 def _execute_export(body: QueryExecuteRequest, user: User, db: Session, client, formato: str):
@@ -308,9 +308,9 @@ def _execute_export(body: QueryExecuteRequest, user: User, db: Session, client, 
     if agg_dicts:
         validate_aggregations(agg_dicts, ds.columns_def)
 
-    row_limit = _EXPORT_ROW_LIMITS[formato]
-    rows, _ = execute_query(
-        client, ds, validated_cols, filters_dicts, 0, row_limit,
+    row_limit = _EXPORT_ROW_LIMITS[formato] if not group_by_names else 2_000_000_000
+    rows = execute_query_export(
+        client, ds, validated_cols, filters_dicts, row_limit,
         group_by=group_by_names or None,
         aggregations=agg_dicts or None,
     )
@@ -383,7 +383,7 @@ def export_adhoc_excel(
     db: Session = Depends(get_sync_db_pg),
     client=Depends(get_ch_client),
 ):
-    """Exportar consulta ad-hoc a Excel (ZIP)."""
+    """Exportar consulta ad-hoc a Excel."""
     rows, columns_meta = _execute_export(body, current_user, db, client, "excel")
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     if body.agrupar:
@@ -755,9 +755,9 @@ def _load_saved_query_for_export(query_id: UUID, user: User, db: Session, client
     validated_cols = validate_columns(selected_columns, ds.columns_def)
     validate_filters(sq.filters or [], ds.columns_def)
 
-    row_limit = _EXPORT_ROW_LIMITS[formato]
-    rows, _ = execute_query(
-        client, ds, validated_cols, sq.filters or [], 0, row_limit,
+    row_limit = _EXPORT_ROW_LIMITS[formato] if not sq.group_by else 2_000_000_000
+    rows = execute_query_export(
+        client, ds, validated_cols, sq.filters or [], row_limit,
         group_by=sq.group_by or None,
         aggregations=sq.aggregations or None,
     )

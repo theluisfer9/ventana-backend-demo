@@ -15,6 +15,7 @@ import zipfile
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.cell import WriteOnlyCell
 from fpdf import FPDF
 
 
@@ -97,7 +98,7 @@ def generate_csv_streaming(rows: list[dict], columns_meta: list[dict]) -> Genera
 # ── Excel (ZIP: un xlsx por departamento, una hoja por municipio) ───
 
 def _write_excel_sheet(ws, headers: list[str], keys: list[str], rows: list[dict]):
-    """Escribe headers + datos en una hoja ya creada."""
+    """Escribe headers + datos en una hoja ya creada (modo normal)."""
     for col_idx, h in enumerate(headers, 1):
         cell = ws.cell(row=1, column=col_idx, value=h)
         cell.font = _HEADER_FONT
@@ -123,6 +124,39 @@ def _write_excel_sheet(ws, headers: list[str], keys: list[str], rows: list[dict]
     ws.freeze_panes = "A2"
 
 
+def _write_excel_sheet_fast(ws, headers: list[str], keys: list[str], rows: list[dict]):
+    """Escribe headers + datos usando write_only mode (optimizado para muchas filas)."""
+    header_cells = []
+    for h in headers:
+        cell = WriteOnlyCell(ws, value=h)
+        cell.font = _HEADER_FONT
+        cell.fill = _HEADER_FILL
+        cell.alignment = _HEADER_ALIGN
+        cell.border = _THIN_BORDER
+        header_cells.append(cell)
+    ws.append(header_cells)
+
+    for row in rows:
+        data_cells = []
+        for key in keys:
+            cell = WriteOnlyCell(ws, value=row.get(key, ""))
+            cell.border = _THIN_BORDER
+            cell.alignment = _CELL_ALIGN
+            data_cells.append(cell)
+        ws.append(data_cells)
+
+    # Auto-width (sample first 100 rows)
+    for col_idx, key in enumerate(keys, 1):
+        max_len = len(headers[col_idx - 1])
+        for row in rows[:100]:
+            val = row.get(key, "")
+            if val is not None:
+                max_len = max(max_len, len(str(val)))
+        ws.column_dimensions[get_column_letter(col_idx)].width = min(max_len + 4, 60)
+
+    ws.freeze_panes = "A2"
+
+
 def generate_excel_zip(rows: list[dict], columns_meta: list[dict], title: str = "Consulta") -> BytesIO:
     """Genera ZIP con un .xlsx por departamento; cada municipio es una hoja."""
     depto_key = _find_geo_key(columns_meta, _GEO_DEPTO_KEYWORDS)
@@ -134,13 +168,12 @@ def generate_excel_zip(rows: list[dict], columns_meta: list[dict], title: str = 
     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for depto_name in sorted(tree.keys()):
             municipios = tree[depto_name]
-            wb = Workbook()
-            wb.remove(wb.active)
+            wb = Workbook(write_only=True)
 
             for muni_name in sorted(municipios.keys()):
                 safe_sheet = muni_name[:31] or "Sin Municipio"
                 ws = wb.create_sheet(title=safe_sheet)
-                _write_excel_sheet(ws, headers, keys, municipios[muni_name])
+                _write_excel_sheet_fast(ws, headers, keys, municipios[muni_name])
 
             xlsx_buf = BytesIO()
             wb.save(xlsx_buf)
@@ -166,10 +199,9 @@ def generate_excel_chunked_zip(rows: list[dict], columns_meta: list[dict], title
             start = chunk_idx * _CHUNK_SIZE
             chunk_rows = rows[start:start + _CHUNK_SIZE]
 
-            wb = Workbook()
-            ws = wb.active
-            ws.title = title[:31]
-            _write_excel_sheet(ws, headers, keys, chunk_rows)
+            wb = Workbook(write_only=True)
+            ws = wb.create_sheet(title=title[:31])
+            _write_excel_sheet_fast(ws, headers, keys, chunk_rows)
 
             xlsx_buf = BytesIO()
             wb.save(xlsx_buf)
@@ -230,10 +262,9 @@ def generate_excel(rows: list[dict], columns_meta: list[dict], title: str = "Con
     headers = [c["label"] for c in columns_meta]
     keys = [c["column_name"] for c in columns_meta]
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = title[:31]
-    _write_excel_sheet(ws, headers, keys, rows)
+    wb = Workbook(write_only=True)
+    ws = wb.create_sheet(title=title[:31])
+    _write_excel_sheet_fast(ws, headers, keys, rows)
 
     buf = BytesIO()
     wb.save(buf)
