@@ -1,7 +1,7 @@
 from uuid import UUID
 from datetime import datetime
 from enum import Enum
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from starlette.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_
@@ -26,6 +26,7 @@ from api.v1.services.query_engine.export import (
     generate_pdf_chunked_zip as gen_query_pdf_chunked_zip,
 )
 from api.v1.auth.permissions import PermissionCode
+from api.v1.services.audit import log_audit_event
 
 
 class ExportFormat(str, Enum):
@@ -236,6 +237,7 @@ def list_available_datasources(
 
 @router.post("/execute", response_model=QueryExecuteResponse)
 def execute_adhoc_query(
+    request: Request,
     body: QueryExecuteRequest,
     current_user: User = Depends(_query_permission),
     db: Session = Depends(get_sync_db_pg),
@@ -273,6 +275,24 @@ def execute_adhoc_query(
     )
 
     columns_meta = _build_columns_meta(group_by_names or None, agg_dicts or None, ds.columns_def, validated_cols)
+    log_audit_event(
+        db,
+        event_type="query",
+        module="query_builder",
+        action="execute",
+        user=current_user,
+        request=request,
+        resource_type="datasource",
+        resource_id=str(ds.id),
+        payload_summary={
+            "datasource_id": str(body.datasource_id),
+            "columns": body.columns,
+            "filters_count": len(body.filters),
+            "group_by": group_by_names,
+            "aggregations_count": len(agg_dicts),
+        },
+        result_count=total,
+    )
 
     return QueryExecuteResponse(
         items=rows, total=total, offset=body.offset, limit=body.limit, columns_meta=columns_meta,
@@ -324,6 +344,7 @@ def _execute_export(body: QueryExecuteRequest, user: User, db: Session, client, 
 
 @router.post("/execute/export")
 def export_adhoc_query(
+    request: Request,
     body: QueryExecuteRequest,
     formato: ExportFormat = Query(...),
     current_user: User = Depends(_query_permission),
@@ -333,6 +354,22 @@ def export_adhoc_query(
     """Exportar consulta ad-hoc a CSV, Excel (ZIP) o PDF (ZIP)."""
     rows, columns_meta = _execute_export(body, current_user, db, client, formato.value)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_audit_event(
+        db,
+        event_type="export",
+        module="query_builder",
+        action=f"export_{formato.value}",
+        user=current_user,
+        request=request,
+        resource_type="datasource",
+        resource_id=str(body.datasource_id),
+        payload_summary={
+            "format": formato.value,
+            "columns": body.columns,
+            "filters_count": len(body.filters),
+        },
+        result_count=len(rows),
+    )
 
     if formato == ExportFormat.csv:
         return StreamingResponse(
@@ -361,6 +398,7 @@ def export_adhoc_query(
 
 @router.post("/execute/export/csv")
 def export_adhoc_csv(
+    request: Request,
     body: QueryExecuteRequest,
     current_user: User = Depends(_query_permission),
     db: Session = Depends(get_sync_db_pg),
@@ -369,6 +407,18 @@ def export_adhoc_csv(
     """Exportar consulta ad-hoc a CSV."""
     rows, columns_meta = _execute_export(body, current_user, db, client, "csv")
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_audit_event(
+        db,
+        event_type="export",
+        module="query_builder",
+        action="export_csv",
+        user=current_user,
+        request=request,
+        resource_type="datasource",
+        resource_id=str(body.datasource_id),
+        payload_summary={"format": "csv", "columns": body.columns, "filters_count": len(body.filters)},
+        result_count=len(rows),
+    )
     return StreamingResponse(
         gen_query_csv_stream(rows, columns_meta),
         media_type=_MEDIA_TYPES["csv"],
@@ -378,6 +428,7 @@ def export_adhoc_csv(
 
 @router.post("/execute/export/excel")
 def export_adhoc_excel(
+    request: Request,
     body: QueryExecuteRequest,
     current_user: User = Depends(_query_permission),
     db: Session = Depends(get_sync_db_pg),
@@ -386,6 +437,18 @@ def export_adhoc_excel(
     """Exportar consulta ad-hoc a Excel (ZIP)."""
     rows, columns_meta = _execute_export(body, current_user, db, client, "excel")
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_audit_event(
+        db,
+        event_type="export",
+        module="query_builder",
+        action="export_excel",
+        user=current_user,
+        request=request,
+        resource_type="datasource",
+        resource_id=str(body.datasource_id),
+        payload_summary={"format": "excel", "columns": body.columns, "filters_count": len(body.filters)},
+        result_count=len(rows),
+    )
     if body.agrupar:
         buf = gen_query_excel_zip(rows, columns_meta, title="Consulta")
     else:
@@ -399,6 +462,7 @@ def export_adhoc_excel(
 
 @router.post("/execute/export/pdf")
 def export_adhoc_pdf(
+    request: Request,
     body: QueryExecuteRequest,
     current_user: User = Depends(_query_permission),
     db: Session = Depends(get_sync_db_pg),
@@ -407,6 +471,18 @@ def export_adhoc_pdf(
     """Exportar consulta ad-hoc a PDF (ZIP)."""
     rows, columns_meta = _execute_export(body, current_user, db, client, "pdf")
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_audit_event(
+        db,
+        event_type="export",
+        module="query_builder",
+        action="export_pdf",
+        user=current_user,
+        request=request,
+        resource_type="datasource",
+        resource_id=str(body.datasource_id),
+        payload_summary={"format": "pdf", "columns": body.columns, "filters_count": len(body.filters)},
+        result_count=len(rows),
+    )
     if body.agrupar:
         buf = gen_query_pdf_zip(rows, columns_meta, title="Consulta")
     else:
