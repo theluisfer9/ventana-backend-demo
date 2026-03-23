@@ -175,3 +175,24 @@ class TestDataSourceColumnCRUD:
         assert len(columns) == 2
         assert columns[0]["column_name"] == "col_a"
         assert columns[1]["column_name"] == "col_b"
+
+
+class TestDataSourceAutoDiscover:
+    def test_auto_discover_marks_binary_integer_flags_as_boolean(
+        self,
+        authenticated_ch_client,
+    ):
+        create_resp = authenticated_ch_client.post("/api/v1/datasources/", json={
+            "code": "AUTO_DS",
+            "name": "Auto Discover DS",
+            "ch_table": "rsh.vw_beneficios_x_hogar",
+        })
+        assert create_resp.status_code == 201
+        ds_id = create_resp.json()["data"]["id"]
+
+        resp = authenticated_ch_client.post(f"/api/v1/datasources/{ds_id}/auto-discover")
+        assert resp.status_code == 200
+        columns = {col["column_name"]: col for col in resp.json()["data"]["columns"]}
+
+        assert columns["prog_fodes"]["data_type"] == "BOOLEAN"
+        assert columns["estufa_mejorada"]["data_type"] == "BOOLEAN"

@@ -34,6 +34,8 @@ class TestAuditEvents:
         assert items[0]["event_type"] == "query"
         assert items[0]["action"] == "list"
         assert items[0]["module"] == "beneficiarios"
+        assert items[0]["username"] == "admin"
+        assert items[0]["institution_name"] == "Test Institution"
         assert items[0]["query_params"]["departamento_codigo"] == "01"
         assert items[0]["status"] == "success"
 
@@ -95,6 +97,7 @@ class TestAuditEvents:
             assert items[0]["event_type"] == "query"
             assert items[0]["action"] == "execute"
             assert items[0]["result_count"] == 2
+            assert items[0]["resource_label"] == "Datasource: Query Test DS"
         finally:
             app.dependency_overrides.pop(get_ch_client, None)
 

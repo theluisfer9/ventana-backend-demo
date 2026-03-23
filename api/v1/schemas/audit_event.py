@@ -12,8 +12,12 @@ class AuditEventOut(BaseModel):
     action: str
     resource_type: str | None = None
     resource_id: str | None = None
+    resource_label: str | None = None
     user_id: UUID | None = None
+    username: str | None = None
+    user_full_name: str | None = None
     institution_id: UUID | None = None
+    institution_name: str | None = None
     request_method: str | None = None
     request_path: str | None = None
     query_params: dict[str, Any]

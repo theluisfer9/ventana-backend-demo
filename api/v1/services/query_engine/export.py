@@ -24,6 +24,15 @@ _GEO_DEPTO_KEYWORDS = ("departamento",)
 _GEO_MUNI_KEYWORDS = ("municipio",)
 
 
+def _normalize_export_value(value):
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8")
+        except UnicodeDecodeError:
+            return value.decode("latin-1", errors="replace")
+    return value
+
+
 def _find_geo_key(columns_meta: list[dict], keywords: tuple[str, ...]) -> str | None:
     """Encuentra la key de una columna geo en columns_meta."""
     for c in columns_meta:
@@ -41,8 +50,16 @@ def _group_rows_by_geo(
     """Agrupa rows en {departamento: {municipio: [rows]}}."""
     tree: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
     for row in rows:
-        depto = str(row.get(depto_key, "Sin Departamento")) if depto_key else "Sin Departamento"
-        muni = str(row.get(muni_key, "Sin Municipio")) if muni_key else "Sin Municipio"
+        depto = (
+            str(_normalize_export_value(row.get(depto_key, "Sin Departamento")))
+            if depto_key
+            else "Sin Departamento"
+        )
+        muni = (
+            str(_normalize_export_value(row.get(muni_key, "Sin Municipio")))
+            if muni_key
+            else "Sin Municipio"
+        )
         tree[depto][muni].append(row)
     return tree
 
@@ -90,7 +107,9 @@ def generate_csv_streaming(rows: list[dict], columns_meta: list[dict]) -> Genera
         chunk_buf = StringIO()
         chunk_writer = csv.writer(chunk_buf, lineterminator="\n")
         for row in rows[i:i + _CSV_CHUNK_SIZE]:
-            chunk_writer.writerow([row.get(k, "") for k in keys])
+            chunk_writer.writerow(
+                [_normalize_export_value(row.get(k, "")) for k in keys]
+            )
         yield chunk_buf.getvalue().encode("utf-8")
 
 
@@ -107,7 +126,11 @@ def _write_excel_sheet(ws, headers: list[str], keys: list[str], rows: list[dict]
 
     for row_idx, row in enumerate(rows, 2):
         for col_idx, key in enumerate(keys, 1):
-            cell = ws.cell(row=row_idx, column=col_idx, value=row.get(key, ""))
+            cell = ws.cell(
+                row=row_idx,
+                column=col_idx,
+                value=_normalize_export_value(row.get(key, "")),
+            )
             cell.border = _THIN_BORDER
             cell.alignment = _CELL_ALIGN
 
@@ -115,7 +138,7 @@ def _write_excel_sheet(ws, headers: list[str], keys: list[str], rows: list[dict]
     for col_idx, key in enumerate(keys, 1):
         max_len = len(headers[col_idx - 1])
         for row in rows[:100]:
-            val = row.get(key, "")
+            val = _normalize_export_value(row.get(key, ""))
             if val is not None:
                 max_len = max(max_len, len(str(val)))
         ws.column_dimensions[get_column_letter(col_idx)].width = min(max_len + 4, 60)
@@ -273,7 +296,7 @@ def _calc_col_widths(headers: list[str], keys: list[str], rows: list[dict]) -> l
     for i, key in enumerate(keys):
         max_len = len(headers[i])
         for row in sample:
-            val = str(row.get(key, ""))
+            val = str(_normalize_export_value(row.get(key, "")))
             max_len = max(max_len, min(len(val), 35))
         raw_widths.append(max_len)
 
@@ -305,7 +328,7 @@ def _write_pdf_rows(pdf: FPDF, keys: list[str], col_widths: list[float], rows: l
             pdf.set_fill_color(255, 255, 255)
 
         for i, key in enumerate(keys):
-            val = str(row.get(key, ""))
+            val = str(_normalize_export_value(row.get(key, "")))
             if len(val) > 35:
                 val = val[:32] + "..."
             pdf.cell(col_widths[i], 7, val, border=1, fill=True, align="C")

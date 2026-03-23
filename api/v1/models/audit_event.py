@@ -40,5 +40,23 @@ class AuditEvent(BasePG):
     user = relationship("User", backref="audit_events")
     institution = relationship("Institution", backref="audit_events")
 
+    @property
+    def username(self) -> str | None:
+        if self.user:
+            return self.user.username
+        return None
+
+    @property
+    def user_full_name(self) -> str | None:
+        if self.user:
+            return self.user.full_name
+        return None
+
+    @property
+    def institution_name(self) -> str | None:
+        if self.institution:
+            return self.institution.name
+        return None
+
     def __repr__(self):
         return f"<AuditEvent {self.event_type}:{self.module}:{self.action}>"
