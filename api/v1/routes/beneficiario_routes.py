@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 
 from api.v1.config.database import get_ch_client, get_sync_db_pg
@@ -57,6 +57,7 @@ from api.v1.services.user_checkpoint import (
     get_user_query_checkpoint,
     upsert_user_query_checkpoint,
 )
+from api.v1.services.audit import log_audit_event
 
 router = APIRouter(prefix="/beneficiarios", tags=["Beneficiarios"])
 PDF_EXPORT_LIMIT = 5000
@@ -279,7 +280,9 @@ def listado_municipio_comunidad(
 
 @router.get("/export/excel")
 def export_excel(
+    request: Request,
     filters: BeneficiarioFilters = Depends(beneficiario_filters_dep),
+    db=Depends(get_sync_db_pg),
     current_user=Depends(RequirePermission(PermissionCode.BENEFICIARIES_EXPORT)),
     client=Depends(get_ch_client),
 ):
@@ -288,6 +291,17 @@ def export_excel(
     rows, _ = query_beneficiarios_lista(client, offset=0, limit=10000, **filter_kwargs)
     items = [row_to_beneficiario_resumen(r) for r in rows]
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_audit_event(
+        db,
+        event_type="export",
+        module="beneficiarios",
+        action="export_excel",
+        user=current_user,
+        request=request,
+        resource_type="beneficiarios",
+        payload_summary={"format": "excel", "filters": filter_kwargs},
+        result_count=len(items),
+    )
 
     if len(items) > EXCEL_ZIP_THRESHOLD:
         buf = generate_excel_grouped_zip(items)
@@ -307,7 +321,9 @@ def export_excel(
 
 @router.get("/export/csv")
 def export_csv(
+    request: Request,
     filters: BeneficiarioFilters = Depends(beneficiario_filters_dep),
+    db=Depends(get_sync_db_pg),
     current_user=Depends(RequirePermission(PermissionCode.BENEFICIARIES_EXPORT)),
     client=Depends(get_ch_client),
 ):
@@ -317,6 +333,17 @@ def export_csv(
     items = [row_to_beneficiario_resumen(r) for r in rows]
     buf = generate_csv(items)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_audit_event(
+        db,
+        event_type="export",
+        module="beneficiarios",
+        action="export_csv",
+        user=current_user,
+        request=request,
+        resource_type="beneficiarios",
+        payload_summary={"format": "csv", "filters": filter_kwargs},
+        result_count=len(items),
+    )
     return StreamingResponse(
         buf,
         media_type="text/csv; charset=utf-8",
@@ -326,7 +353,9 @@ def export_csv(
 
 @router.get("/export/pdf")
 def export_pdf(
+    request: Request,
     filters: BeneficiarioFilters = Depends(beneficiario_filters_dep),
+    db=Depends(get_sync_db_pg),
     current_user=Depends(RequirePermission(PermissionCode.BENEFICIARIES_EXPORT)),
     client=Depends(get_ch_client),
 ):
@@ -336,6 +365,17 @@ def export_pdf(
     items = [row_to_beneficiario_resumen(r) | {"comunidad": r.get("comunidad", "")} for r in rows]
     buf = generate_pdf(items)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_audit_event(
+        db,
+        event_type="export",
+        module="beneficiarios",
+        action="export_pdf",
+        user=current_user,
+        request=request,
+        resource_type="beneficiarios",
+        payload_summary={"format": "pdf", "filters": filter_kwargs},
+        result_count=len(items),
+    )
     return StreamingResponse(
         buf,
         media_type="application/pdf",
@@ -345,9 +385,11 @@ def export_pdf(
 
 @router.get("/", response_model=PaginatedBeneficiarios)
 def listar(
+    request: Request,
     filters: BeneficiarioFilters = Depends(beneficiario_filters_dep),
     offset: int = Query(0, ge=0, description="Offset para paginacion"),
     limit: int = Query(20, ge=1, le=100, description="Limite de resultados"),
+    db=Depends(get_sync_db_pg),
     current_user=Depends(RequirePermission(PermissionCode.BENEFICIARIES_READ)),
     client=Depends(get_ch_client),
 ):
@@ -355,6 +397,17 @@ def listar(
     filter_kwargs = filters.model_dump(exclude_none=True)
     rows, total = query_beneficiarios_lista(client, offset=offset, limit=limit, **filter_kwargs)
     items = [row_to_beneficiario_resumen(r) for r in rows]
+    log_audit_event(
+        db,
+        event_type="query",
+        module="beneficiarios",
+        action="list",
+        user=current_user,
+        request=request,
+        resource_type="beneficiarios",
+        payload_summary={"filters": filter_kwargs, "offset": offset, "limit": limit},
+        result_count=total,
+    )
     return PaginatedBeneficiarios(items=items, total=total, offset=offset, limit=limit)
 
 

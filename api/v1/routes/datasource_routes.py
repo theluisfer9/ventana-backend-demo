@@ -124,7 +124,16 @@ def list_ch_columns(
         raise HTTPException(status_code=400, detail=f"Nombre de tabla no válido: {table!r}")
     result = ch_client.query(f"DESCRIBE TABLE {safe_table}")
     columns = [
-        {"name": row[0], "type": row[1]}
+        {
+            "name": row[0],
+            "type": row[1],
+            "normalized_type": _infer_column_data_type(
+                table,
+                row[0],
+                row[1],
+                ch_client,
+            ).value,
+        }
         for row in result.result_rows
     ]
     return columns
@@ -162,6 +171,25 @@ _CH_TYPE_MAP = {
     "Decimal": ColumnDataType.FLOAT,
 }
 
+_INTEGER_TYPES = {
+    "UInt8",
+    "UInt16",
+    "UInt32",
+    "UInt64",
+    "Int8",
+    "Int16",
+    "Int32",
+    "Int64",
+    "Nullable(UInt8)",
+    "Nullable(UInt16)",
+    "Nullable(UInt32)",
+    "Nullable(UInt64)",
+    "Nullable(Int8)",
+    "Nullable(Int16)",
+    "Nullable(Int32)",
+    "Nullable(Int64)",
+}
+
 
 def _map_ch_type(ch_type: str) -> ColumnDataType:
     """Map a ClickHouse type string to ColumnDataType."""
@@ -173,6 +201,39 @@ def _map_ch_type(ch_type: str) -> ColumnDataType:
     if "float" in lower or "decimal" in lower:
         return ColumnDataType.FLOAT
     return ColumnDataType.TEXT
+
+
+def _is_integer_ch_type(ch_type: str) -> bool:
+    if ch_type in _INTEGER_TYPES:
+        return True
+    lower = ch_type.lower()
+    return "int" in lower and "point" not in lower
+
+
+def _is_binary_integer_column(table: str, column_name: str, ch_client) -> bool:
+    safe_table = _safe_identifier(table)
+    safe_column = _safe_identifier(column_name)
+    result = ch_client.query(
+        f"SELECT countIf({safe_column} IS NOT NULL AND {safe_column} NOT IN (0, 1)) "
+        f"AS non_binary_count FROM {safe_table}"
+    )
+    non_binary_count = result.result_rows[0][0] if result.result_rows else 0
+    return non_binary_count == 0
+
+
+def _infer_column_data_type(
+    table: str,
+    column_name: str,
+    ch_type: str,
+    ch_client,
+) -> ColumnDataType:
+    if _is_integer_ch_type(ch_type) and _is_binary_integer_column(
+        table,
+        column_name,
+        ch_client,
+    ):
+        return ColumnDataType.BOOLEAN
+    return _map_ch_type(ch_type)
 
 
 def _guess_category(col_name: str, data_type: ColumnDataType) -> ColumnCategory:
@@ -222,7 +283,7 @@ def auto_discover_columns(
         if col_name in existing_names:
             continue
 
-        data_type = _map_ch_type(ch_type)
+        data_type = _infer_column_data_type(ds.ch_table, col_name, ch_type, ch_client)
         category = _guess_category(col_name, data_type)
 
         col = DataSourceColumn(

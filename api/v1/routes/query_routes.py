@@ -1,7 +1,7 @@
 from uuid import UUID
 from datetime import datetime
 from enum import Enum
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from starlette.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_
@@ -26,6 +26,11 @@ from api.v1.services.query_engine.export import (
     generate_pdf_chunked_zip as gen_query_pdf_chunked_zip,
 )
 from api.v1.auth.permissions import PermissionCode
+from api.v1.services.audit import (
+    build_query_audit_payload,
+    build_query_audit_summary,
+    log_audit_event,
+)
 
 
 class ExportFormat(str, Enum):
@@ -236,6 +241,7 @@ def list_available_datasources(
 
 @router.post("/execute", response_model=QueryExecuteResponse)
 def execute_adhoc_query(
+    request: Request,
     body: QueryExecuteRequest,
     current_user: User = Depends(_query_permission),
     db: Session = Depends(get_sync_db_pg),
@@ -273,6 +279,31 @@ def execute_adhoc_query(
     )
 
     columns_meta = _build_columns_meta(group_by_names or None, agg_dicts or None, ds.columns_def, validated_cols)
+    payload_summary = build_query_audit_payload(
+        datasource=ds,
+        selected_columns=body.columns,
+        filters=filters_dicts,
+        group_by=group_by_names,
+        aggregations=agg_dicts,
+        agrupar=body.agrupar,
+    )
+    log_audit_event(
+        db,
+        event_type="query",
+        module="query_builder",
+        action="execute",
+        user=current_user,
+        request=request,
+        resource_type="datasource",
+        resource_id=str(ds.id),
+        payload_summary=payload_summary,
+        summary_text=build_query_audit_summary(
+            payload_summary,
+            event_type="query",
+            result_count=total,
+        ),
+        result_count=total,
+    )
 
     return QueryExecuteResponse(
         items=rows, total=total, offset=body.offset, limit=body.limit, columns_meta=columns_meta,
@@ -324,6 +355,7 @@ def _execute_export(body: QueryExecuteRequest, user: User, db: Session, client, 
 
 @router.post("/execute/export")
 def export_adhoc_query(
+    request: Request,
     body: QueryExecuteRequest,
     formato: ExportFormat = Query(...),
     current_user: User = Depends(_query_permission),
@@ -333,6 +365,35 @@ def export_adhoc_query(
     """Exportar consulta ad-hoc a CSV, Excel (ZIP) o PDF (ZIP)."""
     rows, columns_meta = _execute_export(body, current_user, db, client, formato.value)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ds = _get_user_datasource(body.datasource_id, current_user, db)
+    filters_dicts = [f.model_dump() for f in body.filters]
+    agg_dicts = [a.model_dump() for a in body.aggregations] if body.aggregations else []
+    payload_summary = build_query_audit_payload(
+        datasource=ds,
+        selected_columns=body.columns,
+        filters=filters_dicts,
+        group_by=body.group_by or [],
+        aggregations=agg_dicts,
+        agrupar=body.agrupar,
+        format=formato.value,
+    )
+    log_audit_event(
+        db,
+        event_type="export",
+        module="query_builder",
+        action=f"export_{formato.value}",
+        user=current_user,
+        request=request,
+        resource_type="datasource",
+        resource_id=str(body.datasource_id),
+        payload_summary=payload_summary,
+        summary_text=build_query_audit_summary(
+            payload_summary,
+            event_type="export",
+            result_count=len(rows),
+        ),
+        result_count=len(rows),
+    )
 
     if formato == ExportFormat.csv:
         return StreamingResponse(
@@ -361,6 +422,7 @@ def export_adhoc_query(
 
 @router.post("/execute/export/csv")
 def export_adhoc_csv(
+    request: Request,
     body: QueryExecuteRequest,
     current_user: User = Depends(_query_permission),
     db: Session = Depends(get_sync_db_pg),
@@ -369,6 +431,35 @@ def export_adhoc_csv(
     """Exportar consulta ad-hoc a CSV."""
     rows, columns_meta = _execute_export(body, current_user, db, client, "csv")
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ds = _get_user_datasource(body.datasource_id, current_user, db)
+    filters_dicts = [f.model_dump() for f in body.filters]
+    agg_dicts = [a.model_dump() for a in body.aggregations] if body.aggregations else []
+    payload_summary = build_query_audit_payload(
+        datasource=ds,
+        selected_columns=body.columns,
+        filters=filters_dicts,
+        group_by=body.group_by or [],
+        aggregations=agg_dicts,
+        agrupar=body.agrupar,
+        format="csv",
+    )
+    log_audit_event(
+        db,
+        event_type="export",
+        module="query_builder",
+        action="export_csv",
+        user=current_user,
+        request=request,
+        resource_type="datasource",
+        resource_id=str(body.datasource_id),
+        payload_summary=payload_summary,
+        summary_text=build_query_audit_summary(
+            payload_summary,
+            event_type="export",
+            result_count=len(rows),
+        ),
+        result_count=len(rows),
+    )
     return StreamingResponse(
         gen_query_csv_stream(rows, columns_meta),
         media_type=_MEDIA_TYPES["csv"],
@@ -378,6 +469,7 @@ def export_adhoc_csv(
 
 @router.post("/execute/export/excel")
 def export_adhoc_excel(
+    request: Request,
     body: QueryExecuteRequest,
     current_user: User = Depends(_query_permission),
     db: Session = Depends(get_sync_db_pg),
@@ -386,6 +478,35 @@ def export_adhoc_excel(
     """Exportar consulta ad-hoc a Excel."""
     rows, columns_meta = _execute_export(body, current_user, db, client, "excel")
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ds = _get_user_datasource(body.datasource_id, current_user, db)
+    filters_dicts = [f.model_dump() for f in body.filters]
+    agg_dicts = [a.model_dump() for a in body.aggregations] if body.aggregations else []
+    payload_summary = build_query_audit_payload(
+        datasource=ds,
+        selected_columns=body.columns,
+        filters=filters_dicts,
+        group_by=body.group_by or [],
+        aggregations=agg_dicts,
+        agrupar=body.agrupar,
+        format="excel",
+    )
+    log_audit_event(
+        db,
+        event_type="export",
+        module="query_builder",
+        action="export_excel",
+        user=current_user,
+        request=request,
+        resource_type="datasource",
+        resource_id=str(body.datasource_id),
+        payload_summary=payload_summary,
+        summary_text=build_query_audit_summary(
+            payload_summary,
+            event_type="export",
+            result_count=len(rows),
+        ),
+        result_count=len(rows),
+    )
     if body.agrupar:
         buf = gen_query_excel_zip(rows, columns_meta, title="Consulta")
     else:
@@ -399,6 +520,7 @@ def export_adhoc_excel(
 
 @router.post("/execute/export/pdf")
 def export_adhoc_pdf(
+    request: Request,
     body: QueryExecuteRequest,
     current_user: User = Depends(_query_permission),
     db: Session = Depends(get_sync_db_pg),
@@ -407,6 +529,35 @@ def export_adhoc_pdf(
     """Exportar consulta ad-hoc a PDF (ZIP)."""
     rows, columns_meta = _execute_export(body, current_user, db, client, "pdf")
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ds = _get_user_datasource(body.datasource_id, current_user, db)
+    filters_dicts = [f.model_dump() for f in body.filters]
+    agg_dicts = [a.model_dump() for a in body.aggregations] if body.aggregations else []
+    payload_summary = build_query_audit_payload(
+        datasource=ds,
+        selected_columns=body.columns,
+        filters=filters_dicts,
+        group_by=body.group_by or [],
+        aggregations=agg_dicts,
+        agrupar=body.agrupar,
+        format="pdf",
+    )
+    log_audit_event(
+        db,
+        event_type="export",
+        module="query_builder",
+        action="export_pdf",
+        user=current_user,
+        request=request,
+        resource_type="datasource",
+        resource_id=str(body.datasource_id),
+        payload_summary=payload_summary,
+        summary_text=build_query_audit_summary(
+            payload_summary,
+            event_type="export",
+            result_count=len(rows),
+        ),
+        result_count=len(rows),
+    )
     if body.agrupar:
         buf = gen_query_pdf_zip(rows, columns_meta, title="Consulta")
     else:
@@ -698,6 +849,7 @@ def delete_saved_query(
 
 @router.post("/saved/{query_id}/execute", response_model=QueryExecuteResponse)
 def execute_saved_query(
+    request: Request,
     query_id: UUID,
     offset: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=1000),
@@ -728,6 +880,32 @@ def execute_saved_query(
     )
 
     columns_meta = _build_columns_meta(sq.group_by or None, sq.aggregations or None, ds.columns_def, validated_cols)
+    payload_summary = build_query_audit_payload(
+        datasource=ds,
+        selected_columns=selected_columns,
+        filters=sq.filters or [],
+        group_by=sq.group_by or [],
+        aggregations=sq.aggregations or [],
+        agrupar=sq.agrupar if sq.agrupar is not None else True,
+        saved_query=sq,
+    )
+    log_audit_event(
+        db,
+        event_type="query",
+        module="query_builder",
+        action="execute_saved",
+        user=current_user,
+        request=request,
+        resource_type="saved_query",
+        resource_id=str(sq.id),
+        payload_summary=payload_summary,
+        summary_text=build_query_audit_summary(
+            payload_summary,
+            event_type="query",
+            result_count=total,
+        ),
+        result_count=total,
+    )
 
     return QueryExecuteResponse(
         items=rows, total=total, offset=offset, limit=limit, columns_meta=columns_meta,
@@ -770,19 +948,47 @@ def _load_saved_query_for_export(query_id: UUID, user: User, db: Session, client
     title = sq.name or "Consulta"
     safe_name = "".join(c if c.isalnum() or c in "_- " else "_" for c in title).strip()[:50]
     agrupar = sq.agrupar if sq.agrupar is not None else True
-    return rows, columns_meta, title, safe_name, agrupar
+    return rows, columns_meta, title, safe_name, agrupar, sq, ds
 
 
 @router.get("/saved/{query_id}/export/csv")
 def export_saved_csv(
+    request: Request,
     query_id: UUID,
     current_user: User = Depends(_query_permission),
     db: Session = Depends(get_sync_db_pg),
     client=Depends(get_ch_client),
 ):
     """Exportar consulta guardada a CSV."""
-    rows, columns_meta, _, safe_name, _ = _load_saved_query_for_export(query_id, current_user, db, client, "csv")
+    rows, columns_meta, _, safe_name, _, sq, ds = _load_saved_query_for_export(query_id, current_user, db, client, "csv")
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    payload_summary = build_query_audit_payload(
+        datasource=ds,
+        selected_columns=list(sq.selected_columns or []),
+        filters=sq.filters or [],
+        group_by=sq.group_by or [],
+        aggregations=sq.aggregations or [],
+        agrupar=sq.agrupar if sq.agrupar is not None else True,
+        format="csv",
+        saved_query=sq,
+    )
+    log_audit_event(
+        db,
+        event_type="export",
+        module="query_builder",
+        action="export_csv",
+        user=current_user,
+        request=request,
+        resource_type="saved_query",
+        resource_id=str(sq.id),
+        payload_summary=payload_summary,
+        summary_text=build_query_audit_summary(
+            payload_summary,
+            event_type="export",
+            result_count=len(rows),
+        ),
+        result_count=len(rows),
+    )
     return StreamingResponse(
         gen_query_csv_stream(rows, columns_meta),
         media_type=_MEDIA_TYPES["csv"],
@@ -792,14 +998,42 @@ def export_saved_csv(
 
 @router.get("/saved/{query_id}/export/excel")
 def export_saved_excel(
+    request: Request,
     query_id: UUID,
     current_user: User = Depends(_query_permission),
     db: Session = Depends(get_sync_db_pg),
     client=Depends(get_ch_client),
 ):
     """Exportar consulta guardada a Excel (ZIP)."""
-    rows, columns_meta, title, safe_name, agrupar = _load_saved_query_for_export(query_id, current_user, db, client, "excel")
+    rows, columns_meta, title, safe_name, agrupar, sq, ds = _load_saved_query_for_export(query_id, current_user, db, client, "excel")
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    payload_summary = build_query_audit_payload(
+        datasource=ds,
+        selected_columns=list(sq.selected_columns or []),
+        filters=sq.filters or [],
+        group_by=sq.group_by or [],
+        aggregations=sq.aggregations or [],
+        agrupar=agrupar,
+        format="excel",
+        saved_query=sq,
+    )
+    log_audit_event(
+        db,
+        event_type="export",
+        module="query_builder",
+        action="export_excel",
+        user=current_user,
+        request=request,
+        resource_type="saved_query",
+        resource_id=str(sq.id),
+        payload_summary=payload_summary,
+        summary_text=build_query_audit_summary(
+            payload_summary,
+            event_type="export",
+            result_count=len(rows),
+        ),
+        result_count=len(rows),
+    )
     if agrupar:
         buf = gen_query_excel_zip(rows, columns_meta, title=title)
     else:
@@ -813,14 +1047,42 @@ def export_saved_excel(
 
 @router.get("/saved/{query_id}/export/pdf")
 def export_saved_pdf(
+    request: Request,
     query_id: UUID,
     current_user: User = Depends(_query_permission),
     db: Session = Depends(get_sync_db_pg),
     client=Depends(get_ch_client),
 ):
     """Exportar consulta guardada a PDF (ZIP)."""
-    rows, columns_meta, title, safe_name, agrupar = _load_saved_query_for_export(query_id, current_user, db, client, "pdf")
+    rows, columns_meta, title, safe_name, agrupar, sq, ds = _load_saved_query_for_export(query_id, current_user, db, client, "pdf")
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    payload_summary = build_query_audit_payload(
+        datasource=ds,
+        selected_columns=list(sq.selected_columns or []),
+        filters=sq.filters or [],
+        group_by=sq.group_by or [],
+        aggregations=sq.aggregations or [],
+        agrupar=agrupar,
+        format="pdf",
+        saved_query=sq,
+    )
+    log_audit_event(
+        db,
+        event_type="export",
+        module="query_builder",
+        action="export_pdf",
+        user=current_user,
+        request=request,
+        resource_type="saved_query",
+        resource_id=str(sq.id),
+        payload_summary=payload_summary,
+        summary_text=build_query_audit_summary(
+            payload_summary,
+            event_type="export",
+            result_count=len(rows),
+        ),
+        result_count=len(rows),
+    )
     if agrupar:
         buf = gen_query_pdf_zip(rows, columns_meta, title=title)
     else:

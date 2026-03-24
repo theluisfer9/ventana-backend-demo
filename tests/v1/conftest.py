@@ -36,12 +36,19 @@ TestingSessionLocal = sessionmaker(
     expire_on_commit=False,
 )
 
+def reset_test_database():
+    with engine.begin() as connection:
+        connection.exec_driver_sql("DROP SCHEMA IF EXISTS public CASCADE")
+        connection.exec_driver_sql("CREATE SCHEMA public")
+
+
 # Preparar esquema antes/despues de cada test
 @pytest.fixture(scope="function", autouse=True)
 def prepare_db():
+    reset_test_database()
     BasePG.metadata.create_all(bind=engine)
     yield
-    BasePG.metadata.drop_all(bind=engine)
+    reset_test_database()
 
 # DB Session for tests
 @pytest.fixture(scope="function")

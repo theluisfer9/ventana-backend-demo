@@ -21,18 +21,23 @@ from api.v1.routes import auth_routes
 from api.v1.routes import user_routes
 from api.v1.routes import role_routes
 from api.v1.routes import institution_routes
+from api.v1.routes import audit_routes
 from api.v1.routes import beneficiario_routes
 from api.v1.routes import consulta_routes
 from api.v1.routes import integration_routes
 from api.v1.routes import datasource_routes
 from api.v1.routes import query_routes
 from api.v1.routes import dashboard_routes
+from api.v1.routes import system_catalog_routes
 
 # Import models to register them with SQLAlchemy
 from api.v1.models import (
     Institution,
     Permission,
     Role,
+    AuditEvent,
+    SystemCatalog,
+    SystemCatalogItem,
     User,
     UserSession,
     UserQueryCheckpoint,
@@ -94,12 +99,14 @@ app.include_router(auth_routes.router, prefix="/api/v1")
 app.include_router(user_routes.router, prefix="/api/v1")
 app.include_router(role_routes.router, prefix="/api/v1")
 app.include_router(institution_routes.router, prefix="/api/v1")
+app.include_router(audit_routes.router, prefix="/api/v1")
 app.include_router(beneficiario_routes.router, prefix="/api/v1")
 app.include_router(consulta_routes.router, prefix="/api/v1")
 app.include_router(integration_routes.router, prefix="/api/v1")
 app.include_router(datasource_routes.router, prefix="/api/v1")
 app.include_router(query_routes.router, prefix="/api/v1")
 app.include_router(dashboard_routes.router, prefix="/api/v1")
+app.include_router(system_catalog_routes.router, prefix="/api/v1")
 
 # Legacy/Example routes
 app.include_router(ticket_routes.router, prefix="/api/v1")

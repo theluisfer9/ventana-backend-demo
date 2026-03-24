@@ -80,6 +80,13 @@ def _mock_ch_client(count=5, rows=None, col_names=None):
     return client
 
 
+def _override_unused_ch():
+    """Provide a harmless ClickHouse dependency for validation-only tests."""
+    client = MagicMock()
+    client.query = MagicMock()
+    return client
+
+
 # ==================== List Available DataSources ====================
 
 class TestListAvailableDataSources:
@@ -143,10 +150,19 @@ class TestExecuteQuery:
 
     def test_execute_invalid_column_returns_400(self, authenticated_admin_client, db_session, test_institution):
         ds = _seed_datasource(db_session, institution_id=test_institution.id)
-        resp = self._execute(
-            authenticated_admin_client, ds.id, ["no_existe"]
-        )
-        assert resp.status_code == 400
+        mock_ch = _override_unused_ch()
+
+        def override_ch():
+            yield mock_ch
+
+        app.dependency_overrides[get_ch_client] = override_ch
+        try:
+            resp = self._execute(
+                authenticated_admin_client, ds.id, ["no_existe"]
+            )
+            assert resp.status_code == 400
+        finally:
+            app.dependency_overrides.pop(get_ch_client, None)
 
     def test_execute_with_filters(self, authenticated_admin_client, db_session, test_institution):
         ds = _seed_datasource(db_session, institution_id=test_institution.id)
@@ -170,8 +186,17 @@ class TestExecuteQuery:
             app.dependency_overrides.pop(get_ch_client, None)
 
     def test_execute_nonexistent_datasource_returns_404(self, authenticated_admin_client):
-        resp = self._execute(authenticated_admin_client, uuid4(), ["hogar_id"])
-        assert resp.status_code == 404
+        mock_ch = _override_unused_ch()
+
+        def override_ch():
+            yield mock_ch
+
+        app.dependency_overrides[get_ch_client] = override_ch
+        try:
+            resp = self._execute(authenticated_admin_client, uuid4(), ["hogar_id"])
+            assert resp.status_code == 404
+        finally:
+            app.dependency_overrides.pop(get_ch_client, None)
 
     def test_execute_with_agrupar_false_does_not_inject_geo_columns(
         self,
@@ -415,8 +440,17 @@ class TestExecuteSavedQuery:
             app.dependency_overrides.pop(get_ch_client, None)
 
     def test_execute_nonexistent_saved_query_returns_404(self, authenticated_admin_client):
-        resp = authenticated_admin_client.post(f"/api/v1/queries/saved/{uuid4()}/execute")
-        assert resp.status_code == 404
+        mock_ch = _override_unused_ch()
+
+        def override_ch():
+            yield mock_ch
+
+        app.dependency_overrides[get_ch_client] = override_ch
+        try:
+            resp = authenticated_admin_client.post(f"/api/v1/queries/saved/{uuid4()}/execute")
+            assert resp.status_code == 404
+        finally:
+            app.dependency_overrides.pop(get_ch_client, None)
 
 
 # ==================== Execute with GROUP BY ====================
@@ -460,16 +494,25 @@ class TestExecuteGroupBy:
 
     def test_execute_non_groupable_column_returns_400(self, authenticated_admin_client, db_session, test_institution):
         ds = _seed_datasource(db_session, institution_id=test_institution.id)
-        resp = authenticated_admin_client.post("/api/v1/queries/execute", json={
-            "datasource_id": str(ds.id),
-            "columns": ["hogar_id"],
-            "filters": [],
-            "group_by": ["hogar_id"],
-            "aggregations": [{"column": "*", "function": "COUNT"}],
-            "offset": 0,
-            "limit": 10,
-        })
-        assert resp.status_code == 400
+        mock_ch = _override_unused_ch()
+
+        def override_ch():
+            yield mock_ch
+
+        app.dependency_overrides[get_ch_client] = override_ch
+        try:
+            resp = authenticated_admin_client.post("/api/v1/queries/execute", json={
+                "datasource_id": str(ds.id),
+                "columns": ["hogar_id"],
+                "filters": [],
+                "group_by": ["hogar_id"],
+                "aggregations": [{"column": "*", "function": "COUNT"}],
+                "offset": 0,
+                "limit": 10,
+            })
+            assert resp.status_code == 400
+        finally:
+            app.dependency_overrides.pop(get_ch_client, None)
 
     def test_group_by_without_aggregations_returns_400(self, authenticated_admin_client, db_session, test_institution):
         ds = _seed_datasource(db_session, institution_id=test_institution.id)
@@ -477,29 +520,47 @@ class TestExecuteGroupBy:
             if col.column_name == "departamento":
                 col.is_groupable = True
         db_session.commit()
-        resp = authenticated_admin_client.post("/api/v1/queries/execute", json={
-            "datasource_id": str(ds.id),
-            "columns": ["departamento"],
-            "filters": [],
-            "group_by": ["departamento"],
-            "aggregations": [],
-            "offset": 0,
-            "limit": 10,
-        })
-        assert resp.status_code == 400
+        mock_ch = _override_unused_ch()
+
+        def override_ch():
+            yield mock_ch
+
+        app.dependency_overrides[get_ch_client] = override_ch
+        try:
+            resp = authenticated_admin_client.post("/api/v1/queries/execute", json={
+                "datasource_id": str(ds.id),
+                "columns": ["departamento"],
+                "filters": [],
+                "group_by": ["departamento"],
+                "aggregations": [],
+                "offset": 0,
+                "limit": 10,
+            })
+            assert resp.status_code == 400
+        finally:
+            app.dependency_overrides.pop(get_ch_client, None)
 
     def test_aggregations_without_group_by_returns_400(self, authenticated_admin_client, db_session, test_institution):
         ds = _seed_datasource(db_session, institution_id=test_institution.id)
-        resp = authenticated_admin_client.post("/api/v1/queries/execute", json={
-            "datasource_id": str(ds.id),
-            "columns": ["departamento"],
-            "filters": [],
-            "group_by": [],
-            "aggregations": [{"column": "*", "function": "COUNT"}],
-            "offset": 0,
-            "limit": 10,
-        })
-        assert resp.status_code == 400
+        mock_ch = _override_unused_ch()
+
+        def override_ch():
+            yield mock_ch
+
+        app.dependency_overrides[get_ch_client] = override_ch
+        try:
+            resp = authenticated_admin_client.post("/api/v1/queries/execute", json={
+                "datasource_id": str(ds.id),
+                "columns": ["departamento"],
+                "filters": [],
+                "group_by": [],
+                "aggregations": [{"column": "*", "function": "COUNT"}],
+                "offset": 0,
+                "limit": 10,
+            })
+            assert resp.status_code == 400
+        finally:
+            app.dependency_overrides.pop(get_ch_client, None)
 
     def test_invalid_aggregation_column_returns_400(self, authenticated_admin_client, db_session, test_institution):
         ds = _seed_datasource(db_session, institution_id=test_institution.id)
@@ -507,13 +568,22 @@ class TestExecuteGroupBy:
             if col.column_name == "departamento":
                 col.is_groupable = True
         db_session.commit()
-        resp = authenticated_admin_client.post("/api/v1/queries/execute", json={
-            "datasource_id": str(ds.id),
-            "columns": ["departamento"],
-            "filters": [],
-            "group_by": ["departamento"],
-            "aggregations": [{"column": "*", "function": "COUNT"}, {"column": "no_existe", "function": "SUM"}],
-            "offset": 0,
-            "limit": 10,
-        })
-        assert resp.status_code == 400
+        mock_ch = _override_unused_ch()
+
+        def override_ch():
+            yield mock_ch
+
+        app.dependency_overrides[get_ch_client] = override_ch
+        try:
+            resp = authenticated_admin_client.post("/api/v1/queries/execute", json={
+                "datasource_id": str(ds.id),
+                "columns": ["departamento"],
+                "filters": [],
+                "group_by": ["departamento"],
+                "aggregations": [{"column": "*", "function": "COUNT"}, {"column": "no_existe", "function": "SUM"}],
+                "offset": 0,
+                "limit": 10,
+            })
+            assert resp.status_code == 400
+        finally:
+            app.dependency_overrides.pop(get_ch_client, None)

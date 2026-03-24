@@ -39,6 +39,13 @@ class MockClickHouseClient:
         if sql_clean.startswith("describe table"):
             return self._handle_describe_table(sql_clean)
 
+        if (
+            sql_clean.startswith("select countif(")
+            and "not in (0, 1)" in sql_clean
+            and "from rsh.vw_beneficios_x_hogar" in sql_clean
+        ):
+            return self._handle_binary_profile(sql_clean)
+
         # ── Consulta: handlers for beneficios_x_hogar (FODES) ──
         if "beneficios_x_hogar" in sql_clean:
             # Dashboard global for consulta
@@ -162,15 +169,35 @@ class MockClickHouseClient:
             ("hombres", "Int32", "", "", "", "", ""),
             ("mujeres", "Int32", "", "", "", "", ""),
             ("ipm_gt", "Float64", "", "", "", "", ""),
-            ("prog_fodes", "UInt8", "", "", "", "", ""),
-            ("prog_maga", "UInt8", "", "", "", "", ""),
-            ("prog_bono_social", "UInt8", "", "", "", "", ""),
-            ("estufa_mejorada", "UInt8", "", "", "", "", ""),
-            ("ecofiltro", "UInt8", "", "", "", "", ""),
+            ("prog_fodes", "Int32", "", "", "", "", ""),
+            ("prog_maga", "Int32", "", "", "", "", ""),
+            ("prog_bono_social", "Int32", "", "", "", "", ""),
+            ("estufa_mejorada", "Int32", "", "", "", "", ""),
+            ("ecofiltro", "Int32", "", "", "", "", ""),
         ]
         return MockQueryResult(
             column_names=["name", "type", "default_type", "default_expression", "comment", "codec_expression", "ttl_expression"],
             result_rows=columns,
+        )
+
+    def _handle_binary_profile(self, sql_clean: str) -> MockQueryResult:
+        match = re.search(
+            r"countif\(([a-z0-9_]+) is not null and \1 not in \(0, 1\)\)",
+            sql_clean,
+        )
+        column_name = match.group(1) if match else ""
+        dataset_column = {
+            "personas": "numero_personas",
+        }.get(column_name, column_name)
+        non_binary_count = sum(
+            1
+            for row in self.dataset.beneficios_x_hogar
+            if row.get(dataset_column) is not None
+            and row.get(dataset_column) not in (0, 1)
+        )
+        return MockQueryResult(
+            column_names=["non_binary_count"],
+            result_rows=[(non_binary_count,)],
         )
 
     # ── Handlers ─────────────────────────────────────────────────────

@@ -24,6 +24,8 @@ from api.v1.services.consulta.mappers import (
     row_to_beneficio_resumen,
     row_to_beneficio_detalle,
 )
+from api.v1.services.audit import log_audit_event
+from api.v1.config.database import get_sync_db_pg
 
 router = APIRouter(prefix="/consulta", tags=["Consulta Institucional"])
 
@@ -130,6 +132,7 @@ def listar(
     offset: int = Query(0, ge=0, description="Offset para paginacion"),
     limit: int = Query(20, ge=1, le=100, description="Limite de resultados"),
     current_user: User = Depends(get_current_active_user),
+    db=Depends(get_sync_db_pg),
     client=Depends(get_ch_client),
 ):
     """Lista paginada de hogares con filtros institucionales."""
@@ -144,6 +147,17 @@ def listar(
         offset=offset, limit=limit, **filter_kwargs
     )
     items = [row_to_beneficio_resumen(r, interv_cols) for r in rows]
+    log_audit_event(
+        db,
+        event_type="query",
+        module="consulta_institucional",
+        action="list",
+        user=current_user,
+        request=request,
+        resource_type="consulta",
+        payload_summary={"filters": filter_kwargs, "offset": offset, "limit": limit},
+        result_count=total,
+    )
     return PaginatedConsulta(items=items, total=total, offset=offset, limit=limit)
 
 

@@ -42,6 +42,16 @@ class TestChColumnsEndpoint:
         assert "hogar_id" in names
         assert "prog_fodes" in names
 
+    def test_binary_integer_columns_are_marked_as_boolean(self, authenticated_ch_client):
+        resp = authenticated_ch_client.get("/api/v1/datasources/ch-columns?table=rsh.vw_beneficios_x_hogar")
+        assert resp.status_code == 200
+        columns = {c["name"]: c for c in resp.json()["data"]}
+
+        assert columns["prog_fodes"]["type"] == "Int32"
+        assert columns["prog_fodes"]["normalized_type"] == "BOOLEAN"
+        assert columns["estufa_mejorada"]["type"] == "Int32"
+        assert columns["estufa_mejorada"]["normalized_type"] == "BOOLEAN"
+
     def test_missing_table_param_returns_422(self, authenticated_ch_client):
         resp = authenticated_ch_client.get("/api/v1/datasources/ch-columns")
         assert resp.status_code == 422
