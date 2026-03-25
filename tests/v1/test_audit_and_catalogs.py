@@ -9,7 +9,11 @@ def _mock_query_builder_ch_client(count=2, rows=None, col_names=None):
     data_result = MagicMock()
     data_result.column_names = col_names or ["hogar_id", "departamento"]
     data_result.result_rows = rows or [[1, "Guatemala"], [2, "Escuintla"]]
-    client.query = MagicMock(side_effect=[count_result, data_result])
+    def _query(sql, **kwargs):
+        if "count()" in sql.lower():
+            return count_result
+        return data_result
+    client.query = MagicMock(side_effect=_query)
     return client
 
 

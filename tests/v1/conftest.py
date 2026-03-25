@@ -40,6 +40,9 @@ def reset_test_database():
     with engine.begin() as connection:
         connection.exec_driver_sql("DROP SCHEMA IF EXISTS public CASCADE")
         connection.exec_driver_sql("CREATE SCHEMA public")
+        connection.exec_driver_sql("DROP TYPE IF EXISTS public.ticketstatus CASCADE")
+        connection.exec_driver_sql("DROP TYPE IF EXISTS public.columndatatype CASCADE")
+        connection.exec_driver_sql("DROP TYPE IF EXISTS public.columncategory CASCADE")
 
 
 # Preparar esquema antes/despues de cada test
