@@ -334,7 +334,8 @@ class TestUserRoutes:
         data = json_data.get("data", json_data)
         assert "items" in data
 
-    def test_create_user_success(self, authenticated_admin_client, test_roles):
+    @patch("api.v1.routes.user_routes.create_keycloak_user", return_value="kc-user-123")
+    def test_create_user_success(self, _mock_create_keycloak_user, authenticated_admin_client, test_roles):
         """Test creating a new user"""
         user_data = {
             "email": "newcreated@test.com",
@@ -355,6 +356,30 @@ class TestUserRoutes:
         assert data["email"] == "newcreated@test.com"
         assert data["username"] == "newcreated"
         assert "id" in data
+
+    @patch("api.v1.routes.user_routes.create_keycloak_user", return_value="kc-user-123")
+    def test_create_user_persists_keycloak_id(
+        self,
+        _mock_create_keycloak_user,
+        authenticated_admin_client,
+        test_roles,
+        db_session,
+    ):
+        user_data = {
+            "email": "kcprofile@test.com",
+            "username": "kcprofile",
+            "first_name": "KC",
+            "last_name": "Profile",
+            "password": "SecurePass123!",
+            "role_id": str(test_roles["analyst"].id),
+        }
+
+        response = authenticated_admin_client.post("/api/v1/users/", json=user_data)
+
+        assert response.status_code == 201
+        user = get_user_by_email(db_session, "kcprofile@test.com")
+        assert user is not None
+        assert user.keycloak_id == "kc-user-123"
 
     def test_create_user_duplicate_email(
         self, authenticated_admin_client, test_regular_user, test_roles
@@ -415,8 +440,11 @@ class TestUserRoutes:
         detail = json_data.get("detail", json_data.get("message", ""))
         assert "no encontrado" in detail.lower()
 
-    def test_update_user_success(self, authenticated_admin_client, test_regular_user):
+    @patch("api.v1.routes.user_routes.update_keycloak_user")
+    def test_update_user_success(self, mock_update_keycloak_user, authenticated_admin_client, test_regular_user):
         """Test updating user"""
+        test_regular_user.keycloak_id = "kc-user-regular"
+        test_regular_user.password_hash = None
         update_data = {
             "first_name": "Updated",
             "last_name": "Name",
@@ -433,6 +461,7 @@ class TestUserRoutes:
         assert data["first_name"] == "Updated"
         assert data["last_name"] == "Name"
         assert data["phone"] == "+1111111111"
+        mock_update_keycloak_user.assert_called_once()
 
     def test_update_user_not_found(self, authenticated_admin_client):
         """Test updating non-existent user"""
@@ -457,8 +486,10 @@ class TestUserRoutes:
         detail = json_data.get("detail", json_data.get("message", ""))
         assert "email" in detail.lower()
 
-    def test_delete_user_success(self, authenticated_admin_client, test_regular_user):
+    @patch("api.v1.routes.user_routes.disable_keycloak_user")
+    def test_delete_user_success(self, mock_disable_keycloak_user, authenticated_admin_client, test_regular_user):
         """Test deleting (deactivating) user"""
+        test_regular_user.keycloak_id = "kc-user-regular"
         response = authenticated_admin_client.delete(f"/api/v1/users/{test_regular_user.id}")
 
         assert response.status_code == 200
@@ -466,6 +497,7 @@ class TestUserRoutes:
         # Check in data.message or top-level message
         message = json_data.get("data", json_data).get("message", json_data.get("message", ""))
         assert "desactivado" in message.lower()
+        mock_disable_keycloak_user.assert_called_once_with("kc-user-regular")
 
     def test_delete_user_self_deletion_prevented(self, authenticated_admin_client, test_admin_user):
         """Test that user cannot delete themselves"""
@@ -476,9 +508,11 @@ class TestUserRoutes:
         detail = json_data.get("detail", json_data.get("message", ""))
         assert "propia cuenta" in detail.lower()
 
-    def test_activate_user_success(self, authenticated_admin_client, test_inactive_user):
+    @patch("api.v1.routes.user_routes.enable_keycloak_user")
+    def test_activate_user_success(self, mock_enable_keycloak_user, authenticated_admin_client, test_inactive_user):
         """Test activating inactive user"""
         assert test_inactive_user.is_active is False
+        test_inactive_user.keycloak_id = "kc-user-inactive"
 
         response = authenticated_admin_client.put(
             f"/api/v1/users/{test_inactive_user.id}/activate"
@@ -488,6 +522,7 @@ class TestUserRoutes:
         json_data = response.json()
         data = json_data.get("data", json_data)
         assert data["is_active"] is True
+        mock_enable_keycloak_user.assert_called_once_with("kc-user-inactive")
 
     def test_revoke_user_sessions_success(self, authenticated_admin_client, test_regular_user, db_session):
         """Test revoking all user sessions"""

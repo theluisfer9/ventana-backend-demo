@@ -46,6 +46,18 @@ class Role(BasePG):
         lazy="selectin",
     )
     users = relationship("User", back_populates="role")
+    saved_query_assignments = relationship(
+        "SavedQueryRole",
+        back_populates="role",
+        cascade="all, delete-orphan",
+        overlaps="roles,saved_queries",
+    )
+    saved_queries = relationship(
+        "SavedQuery",
+        secondary="saved_query_roles",
+        back_populates="roles",
+        overlaps="saved_query_assignments,role_assignments,role,saved_query",
+    )
 
     def __repr__(self):
         return f"<Role {self.code}: {self.name}>"

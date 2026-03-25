@@ -112,9 +112,42 @@ class SavedQuery(BasePG):
     user = relationship("User", backref="saved_queries")
     data_source = relationship("DataSource", back_populates="saved_queries")
     institution = relationship("Institution", backref="shared_queries")
+    role_assignments = relationship(
+        "SavedQueryRole",
+        back_populates="saved_query",
+        cascade="all, delete-orphan",
+    )
+    roles = relationship(
+        "Role",
+        secondary="saved_query_roles",
+        back_populates="saved_queries",
+        overlaps="role_assignments,saved_query_assignments,saved_query",
+    )
 
     def __repr__(self):
         return f"<SavedQuery {self.name}>"
+
+
+class SavedQueryRole(BasePG):
+    __tablename__ = "saved_query_roles"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    saved_query_id = Column(UUID(as_uuid=True), ForeignKey("saved_queries.id", ondelete="CASCADE"), nullable=False)
+    role_id = Column(UUID(as_uuid=True), ForeignKey("roles.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    saved_query = relationship(
+        "SavedQuery",
+        back_populates="role_assignments",
+        overlaps="roles,saved_queries",
+    )
+    role = relationship(
+        "Role",
+        back_populates="saved_query_assignments",
+        overlaps="roles,saved_queries",
+    )
+
+    __table_args__ = (UniqueConstraint("saved_query_id", "role_id"),)
 
 
 class RoleDataSource(BasePG):

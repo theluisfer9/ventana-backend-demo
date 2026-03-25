@@ -4,12 +4,13 @@ from enum import Enum
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from starlette.responses import StreamingResponse
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import or_
+from sqlalchemy import or_, select
 from api.v1.config.database import get_sync_db_pg, get_ch_client
 from api.v1.dependencies.auth_dependency import get_current_active_user
 from api.v1.dependencies.permission_dependency import RequireAnyPermission
 from api.v1.models.user import User
-from api.v1.models.data_source import DataSource, SavedQuery, RoleDataSource
+from api.v1.models.data_source import DataSource, SavedQuery, RoleDataSource, SavedQueryRole
+from api.v1.models.role import Role
 from api.v1.schemas.query_builder import (
     QueryExecuteRequest, QueryExecuteResponse, ColumnMeta,
     SavedQueryCreate, SavedQueryUpdate, SavedQueryOut, SavedQueryListItem,
@@ -99,10 +100,6 @@ def _get_user_datasource(ds_id: UUID, user: User, db: Session) -> DataSource:
     if not ds:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="DataSource no encontrado")
     if not _is_admin(user):
-        # Allow access if datasource belongs to user's institution
-        if user.institution_id and ds.institution_id and user.institution_id == ds.institution_id:
-            return ds
-        # Otherwise check role-datasource mapping
         has_access = db.query(RoleDataSource).filter(
             RoleDataSource.role_id == user.role_id,
             RoleDataSource.datasource_id == ds.id,
@@ -130,58 +127,33 @@ def _ensure_geo_columns(columns: list[str], columns_def: list) -> list[str]:
     return columns
 
 
-def _is_institutional_admin(user: User) -> bool:
-    """Check if user has reports:create (admin institucional)."""
-    if not user.role:
-        return False
-    user_permissions = {p.code for p in user.role.permissions}
-    return PermissionCode.REPORTS_CREATE.value in user_permissions
+def _get_saved_query_role_ids(sq: SavedQuery) -> set[UUID]:
+    return {role.id for role in sq.roles or []}
 
 
-def _same_institution(sq: SavedQuery, user: User) -> bool:
-    """Check if saved query's datasource belongs to user's institution."""
-    if not user.institution_id:
-        return False
-    if sq.institution_id and sq.institution_id == user.institution_id:
-        return True
-    if sq.data_source and sq.data_source.institution_id == user.institution_id:
-        return True
-    return False
-
-
-def _normalize_saved_query_scope(
-    institution_id,
-    is_shared: bool,
-    current_user: User,
-):
-    """Normalize sharing fields to keep private queries private."""
-    if _is_admin(current_user):
-        if is_shared:
-            if not institution_id:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Las consultas compartidas requieren una institucion destino",
-                )
-            return institution_id, True
-        return None, False
-
-    if _is_institutional_admin(current_user) and current_user.institution_id:
-        if is_shared:
-            target_inst = institution_id or current_user.institution_id
-            if str(target_inst) != str(current_user.institution_id):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Solo puede compartir consultas dentro de su institucion",
-                )
-            return current_user.institution_id, True
-        return None, False
-
-    if is_shared or institution_id:
+def _load_roles_by_ids(db: Session, role_ids: list[UUID]) -> list[Role]:
+    unique_role_ids = list(dict.fromkeys(role_ids))
+    if not unique_role_ids:
+        return []
+    roles = db.query(Role).filter(Role.id.in_(unique_role_ids)).order_by(Role.name).all()
+    found_ids = {role.id for role in roles}
+    missing_ids = [str(role_id) for role_id in unique_role_ids if role_id not in found_ids]
+    if missing_ids:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="No tiene permiso para compartir consultas a instituciones",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Roles no válidos: {missing_ids}",
         )
-    return None, False
+    return roles
+
+
+def _sync_saved_query_roles(db: Session, sq: SavedQuery, roles: list[Role]) -> None:
+    target_role_ids = {role.id for role in roles}
+    current_role_ids = _get_saved_query_role_ids(sq)
+
+    if current_role_ids == target_role_ids:
+        return
+
+    sq.roles = roles
 
 
 def _can_access_saved_query(sq: SavedQuery, user: User) -> bool:
@@ -190,7 +162,7 @@ def _can_access_saved_query(sq: SavedQuery, user: User) -> bool:
         return True
     if sq.user_id == user.id:
         return True
-    if sq.is_shared and sq.institution_id and user.institution_id == sq.institution_id:
+    if user.role_id and user.role_id in _get_saved_query_role_ids(sq):
         return True
     return False
 
@@ -205,15 +177,7 @@ def list_available_datasources(
         accessible_ids = db.query(RoleDataSource.datasource_id).filter(
             RoleDataSource.role_id == current_user.role_id,
         ).subquery()
-        if current_user.institution_id:
-            query = query.filter(
-                or_(
-                    DataSource.id.in_(accessible_ids),
-                    DataSource.institution_id == current_user.institution_id,
-                )
-            )
-        else:
-            query = query.filter(DataSource.id.in_(accessible_ids))
+        query = query.filter(DataSource.id.in_(select(accessible_ids.c.datasource_id)))
     sources = query.order_by(DataSource.name).all()
     return [
         {
@@ -241,6 +205,18 @@ def list_available_datasources(
             ],
         }
         for ds in sources
+    ]
+
+
+@router.get("/roles")
+def list_assignable_roles(
+    current_user: User = Depends(_query_write_permission),
+    db: Session = Depends(get_sync_db_pg),
+):
+    roles = db.query(Role).order_by(Role.name).all()
+    return [
+        {"id": str(role.id), "code": role.code, "name": role.name}
+        for role in roles
     ]
 
 
@@ -604,11 +580,7 @@ def save_query(
     if agg_dicts:
         validate_aggregations(agg_dicts, ds.columns_def)
 
-    institution_id, is_shared = _normalize_saved_query_scope(
-        body.institution_id,
-        body.is_shared,
-        current_user,
-    )
+    roles = _load_roles_by_ids(db, body.role_ids)
 
     sq = SavedQuery(
         user_id=current_user.id,
@@ -619,14 +591,30 @@ def save_query(
         filters=filters_dicts,
         group_by=body.group_by or [],
         aggregations=agg_dicts,
-        institution_id=institution_id,
-        is_shared=is_shared,
+        institution_id=None,
+        is_shared=False,
         agrupar=body.agrupar,
     )
+    sq.roles = roles
     db.add(sq)
     db.commit()
     db.refresh(sq)
-    return {"id": str(sq.id), "name": sq.name, "is_shared": sq.is_shared}
+    return SavedQueryOut(
+        id=sq.id,
+        name=sq.name,
+        description=sq.description,
+        datasource_id=sq.datasource_id,
+        datasource_name=sq.data_source.name if sq.data_source else "",
+        selected_columns=sq.selected_columns or [],
+        filters=sq.filters or [],
+        group_by=sq.group_by or [],
+        aggregations=sq.aggregations or [],
+        role_ids=[role.id for role in sq.roles],
+        role_names=[role.name for role in sq.roles],
+        agrupar=sq.agrupar,
+        created_by=sq.user.full_name if sq.user else None,
+        created_at=sq.created_at.isoformat() if sq.created_at else "",
+    )
 
 
 @router.get("/saved")
@@ -645,26 +633,22 @@ def list_saved_queries(
         .options(
             joinedload(SavedQuery.data_source),
             joinedload(SavedQuery.user),
-            joinedload(SavedQuery.institution),
+            joinedload(SavedQuery.roles),
         )
     )
 
     if _is_admin(current_user):
         queries = base_query.order_by(SavedQuery.created_at.desc()).all()
-    elif current_user.institution_id:
-        queries = (
-            base_query.filter(
-                or_(
-                    SavedQuery.user_id == current_user.id,
-                    (SavedQuery.is_shared == True) & (SavedQuery.institution_id == current_user.institution_id),
-                )
-            )
-            .order_by(SavedQuery.created_at.desc())
-            .all()
-        )
     else:
         queries = (
-            base_query.filter(SavedQuery.user_id == current_user.id)
+            base_query.outerjoin(SavedQuery.roles)
+            .filter(
+                or_(
+                    SavedQuery.user_id == current_user.id,
+                    Role.id == current_user.role_id,
+                )
+            )
+            .distinct()
             .order_by(SavedQuery.created_at.desc())
             .all()
         )
@@ -678,8 +662,7 @@ def list_saved_queries(
             column_count=len(sq.selected_columns) if sq.selected_columns else 0,
             filter_count=len(sq.filters) if sq.filters else 0,
             has_aggregations=bool(sq.aggregations),
-            institution_name=sq.institution.name if sq.institution else None,
-            is_shared=sq.is_shared or False,
+            role_names=[role.name for role in sq.roles],
             agrupar=sq.agrupar,
             created_by=sq.user.full_name if sq.user else None,
             created_at=sq.created_at.isoformat() if sq.created_at else "",
@@ -699,7 +682,7 @@ def get_saved_query(
         .options(
             joinedload(SavedQuery.data_source),
             joinedload(SavedQuery.user),
-            joinedload(SavedQuery.institution),
+            joinedload(SavedQuery.roles),
         )
         .filter(SavedQuery.id == query_id)
         .first()
@@ -716,9 +699,8 @@ def get_saved_query(
         filters=sq.filters or [],
         group_by=sq.group_by or [],
         aggregations=sq.aggregations or [],
-        institution_id=sq.institution_id,
-        institution_name=sq.institution.name if sq.institution else None,
-        is_shared=sq.is_shared or False,
+        role_ids=[role.id for role in sq.roles],
+        role_names=[role.name for role in sq.roles],
         agrupar=sq.agrupar,
         created_by=sq.user.full_name if sq.user else None,
         created_at=sq.created_at.isoformat() if sq.created_at else "",
@@ -738,7 +720,7 @@ def update_saved_query(
         .options(
             joinedload(SavedQuery.data_source),
             joinedload(SavedQuery.user),
-            joinedload(SavedQuery.institution),
+            joinedload(SavedQuery.roles),
         )
         .filter(SavedQuery.id == query_id)
         .first()
@@ -748,7 +730,6 @@ def update_saved_query(
     can_edit = (
         _is_admin(current_user)
         or sq.user_id == current_user.id
-        or (_is_institutional_admin(current_user) and _same_institution(sq, current_user))
     )
     if not can_edit:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tiene permiso para editar esta consulta")
@@ -792,18 +773,10 @@ def update_saved_query(
     if "aggregations" in update_data and body.aggregations is not None:
         update_data["aggregations"] = [a.model_dump() for a in body.aggregations]
 
-    # Solo admin o admin institucional (dentro de su institucion) puede compartir
-    if "is_shared" in update_data or "institution_id" in update_data:
-        normalized_institution_id, normalized_is_shared = _normalize_saved_query_scope(
-            update_data.get("institution_id", sq.institution_id),
-            update_data.get("is_shared", sq.is_shared or False),
-            current_user,
-        )
-        update_data["institution_id"] = normalized_institution_id
-        update_data["is_shared"] = normalized_is_shared
-
     for key, value in update_data.items():
         setattr(sq, key, value)
+    if body.role_ids is not None:
+        _sync_saved_query_roles(db, sq, _load_roles_by_ids(db, body.role_ids))
 
     db.commit()
     db.refresh(sq)
@@ -818,9 +791,8 @@ def update_saved_query(
         filters=sq.filters or [],
         group_by=sq.group_by or [],
         aggregations=sq.aggregations or [],
-        institution_id=sq.institution_id,
-        institution_name=sq.institution.name if sq.institution else None,
-        is_shared=sq.is_shared or False,
+        role_ids=[role.id for role in sq.roles],
+        role_names=[role.name for role in sq.roles],
         agrupar=sq.agrupar,
         created_by=sq.user.full_name if sq.user else None,
         created_at=sq.created_at.isoformat() if sq.created_at else "",
@@ -844,7 +816,6 @@ def delete_saved_query(
     can_delete = (
         _is_admin(current_user)
         or sq.user_id == current_user.id
-        or (_is_institutional_admin(current_user) and _same_institution(sq, current_user))
     )
     if not can_delete:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tiene permiso para eliminar esta consulta")
@@ -864,7 +835,7 @@ def execute_saved_query(
 ):
     sq = (
         db.query(SavedQuery)
-        .options(joinedload(SavedQuery.data_source))
+        .options(joinedload(SavedQuery.data_source), joinedload(SavedQuery.roles))
         .filter(SavedQuery.id == query_id)
         .first()
     )
@@ -924,7 +895,7 @@ def _load_saved_query_for_export(query_id: UUID, user: User, db: Session, client
     """Carga y ejecuta una saved query para exportar."""
     sq = (
         db.query(SavedQuery)
-        .options(joinedload(SavedQuery.data_source))
+        .options(joinedload(SavedQuery.data_source), joinedload(SavedQuery.roles))
         .filter(SavedQuery.id == query_id)
         .first()
     )

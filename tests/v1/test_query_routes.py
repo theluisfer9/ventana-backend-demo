@@ -6,11 +6,14 @@ import pytest
 from uuid import uuid4
 from unittest.mock import MagicMock
 
+from fastapi.testclient import TestClient
 from main import app
-from api.v1.config.database import get_ch_client
+from api.v1.config.database import get_ch_client, get_sync_db_pg
 from api.v1.models.data_source import (
-    DataSource, DataSourceColumn, ColumnDataType, ColumnCategory,
+    DataSource, DataSourceColumn, ColumnDataType, ColumnCategory, RoleDataSource, SavedQuery, SavedQueryRole,
 )
+from api.v1.models.user import User
+from api.v1.auth.password import hash_password
 
 
 # ==================== Helpers ====================
@@ -68,6 +71,25 @@ def _seed_datasource(db_session, institution_id=None, code="QRY_DS"):
     return ds
 
 
+def _seed_user(db_session, role_id, institution_id=None, username="queryuser", email=None):
+    user = User(
+        id=uuid4(),
+        email=email or f"{username}@test.com",
+        username=username,
+        password_hash=hash_password("User123!"),
+        first_name=username.capitalize(),
+        last_name="User",
+        role_id=role_id,
+        institution_id=institution_id,
+        is_active=True,
+        is_verified=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
 def _mock_ch_client(count=5, rows=None, col_names=None):
     """Create a mock ClickHouse client that returns predictable data."""
     client = MagicMock()
@@ -108,6 +130,21 @@ class TestListAvailableDataSources:
         data = resp.json()["data"]
         codes = [d["code"] for d in data]
         assert "INACTIVE_DS" not in codes
+
+    def test_role_assigned_datasource_is_listed_even_without_matching_institution(
+        self,
+        authenticated_regular_client,
+        db_session,
+        test_regular_user,
+    ):
+        ds = _seed_datasource(db_session, institution_id=None, code="ROLE_ONLY_DS")
+        db_session.add(RoleDataSource(role_id=test_regular_user.role_id, datasource_id=ds.id))
+        db_session.commit()
+
+        resp = authenticated_regular_client.get("/api/v1/queries/datasources")
+
+        assert resp.status_code == 200
+        assert [item["code"] for item in resp.json()["data"]] == ["ROLE_ONLY_DS"]
 
 
 # ==================== Execute Ad-Hoc Query ====================
@@ -234,12 +271,13 @@ class TestExecuteQuery:
 # ==================== Save / List / Get / Delete Queries ====================
 
 class TestSavedQueries:
-    def _save_query(self, client, ds_id, name="Mi Consulta"):
+    def _save_query(self, client, ds_id, name="Mi Consulta", role_ids=None):
         return client.post("/api/v1/queries/saved", json={
             "datasource_id": str(ds_id),
             "name": name,
             "selected_columns": ["hogar_id", "departamento"],
             "filters": [{"column": "departamento", "op": "eq", "value": "01"}],
+            "role_ids": role_ids or [],
         })
 
     def test_save_query(self, authenticated_admin_client, db_session, test_institution):
@@ -249,6 +287,7 @@ class TestSavedQueries:
         data = resp.json()["data"]
         assert data["name"] == "Mi Consulta"
         assert "id" in data
+        assert data["role_names"] == []
 
     def test_save_query_persists_agrupar(self, authenticated_admin_client, db_session, test_institution):
         ds = _seed_datasource(db_session, institution_id=test_institution.id)
@@ -389,22 +428,167 @@ class TestSavedQueries:
         })
         assert resp.status_code == 400
 
-    def test_save_shared_query_without_institution_returns_400(
+    def test_save_query_persists_assigned_roles(
         self,
         authenticated_admin_client,
         db_session,
-        test_institution,
+        test_roles,
     ):
-        ds = _seed_datasource(db_session, institution_id=test_institution.id)
+        ds = _seed_datasource(db_session, institution_id=None)
         resp = authenticated_admin_client.post("/api/v1/queries/saved", json={
             "datasource_id": str(ds.id),
-            "name": "Shared Without Institution",
+            "name": "Role Scoped Query",
             "selected_columns": ["hogar_id", "departamento"],
             "filters": [],
-            "is_shared": True,
-            "institution_id": None,
+            "role_ids": [str(test_roles["analyst"].id)],
         })
-        assert resp.status_code == 400
+        assert resp.status_code == 201
+        data = resp.json()["data"]
+        assert data["role_names"] == ["Analista"]
+
+    def test_creator_can_see_own_query_without_role_assignment(
+        self,
+        db_session,
+        test_roles,
+        test_institution,
+        authenticated_regular_client,
+        test_regular_user,
+    ):
+        ds = _seed_datasource(db_session, institution_id=None, code="OWN_QUERY_DS")
+        db_session.add(RoleDataSource(role_id=test_regular_user.role_id, datasource_id=ds.id))
+        db_session.commit()
+
+        saved_query = SavedQuery(
+            user_id=test_regular_user.id,
+            datasource_id=ds.id,
+            name="Solo mia",
+            selected_columns=["hogar_id"],
+            filters=[],
+            group_by=[],
+            aggregations=[],
+            agrupar=True,
+            institution_id=None,
+            is_shared=False,
+        )
+        db_session.add(saved_query)
+        db_session.commit()
+
+        resp = authenticated_regular_client.get("/api/v1/queries/saved")
+
+        assert resp.status_code == 200
+        assert [item["name"] for item in resp.json()["data"]] == ["Solo mia"]
+
+    def test_assigned_role_can_execute_but_not_edit_query(
+        self,
+        db_session,
+        authenticated_regular_client,
+        test_regular_user,
+    ):
+        ds = _seed_datasource(db_session, institution_id=None, code="ROLE_EXEC_DS")
+        db_session.add(RoleDataSource(role_id=test_regular_user.role_id, datasource_id=ds.id))
+        creator = _seed_user(
+            db_session,
+            role_id=test_regular_user.role_id,
+            institution_id=None,
+            username="creator",
+            email="creator@test.com",
+        )
+        saved_query = SavedQuery(
+            user_id=creator.id,
+            datasource_id=ds.id,
+            name="Asignada a analista",
+            selected_columns=["hogar_id", "departamento"],
+            filters=[],
+            group_by=[],
+            aggregations=[],
+            agrupar=True,
+            institution_id=None,
+            is_shared=False,
+        )
+        db_session.add(saved_query)
+        db_session.flush()
+        db_session.add(SavedQueryRole(saved_query_id=saved_query.id, role_id=test_regular_user.role_id))
+        db_session.commit()
+        query_id = str(saved_query.id)
+
+        mock_ch = _mock_ch_client(
+            count=1,
+            rows=[[1, "Guatemala"]],
+            col_names=["hogar_id", "departamento"],
+        )
+
+        def override_ch():
+            yield mock_ch
+
+        app.dependency_overrides[get_ch_client] = override_ch
+        try:
+            execute_resp = authenticated_regular_client.post(f"/api/v1/queries/saved/{query_id}/execute")
+        finally:
+            app.dependency_overrides.pop(get_ch_client, None)
+
+        update_resp = authenticated_regular_client.put(
+            f"/api/v1/queries/saved/{query_id}",
+            json={"name": "No deberia poder"},
+        )
+
+        assert execute_resp.status_code == 200
+        assert update_resp.status_code == 403
+
+    def test_unassigned_role_cannot_access_query(
+        self,
+        db_session,
+        test_roles,
+        test_institution,
+        authenticated_regular_client,
+        authenticated_admin_client,
+    ):
+        outsider = _seed_user(
+            db_session,
+            role_id=test_roles["analyst"].id,
+            institution_id=None,
+            username="outsider",
+            email="outsider@test.com",
+        )
+        ds = _seed_datasource(db_session, institution_id=None, code="LOCKED_DS")
+        save_resp = authenticated_admin_client.post("/api/v1/queries/saved", json={
+            "datasource_id": str(ds.id),
+            "name": "Privada",
+            "selected_columns": ["hogar_id"],
+            "filters": [],
+        })
+        assert save_resp.status_code == 201
+        query_id = save_resp.json()["data"]["id"]
+
+        from api.v1.dependencies.auth_dependency import get_current_user, get_token_from_header
+        from api.v1.dependencies.permission_dependency import RequirePermission
+
+        def override_get_db():
+            yield db_session
+
+        def override_get_current_user():
+            return outsider
+
+        def override_get_token():
+            return "mock_token"
+
+        original_call = RequirePermission.__call__
+
+        def mock_call(self, current_user=None):
+            return outsider
+
+        RequirePermission.__call__ = mock_call
+        app.dependency_overrides[get_current_user] = override_get_current_user
+        app.dependency_overrides[get_token_from_header] = override_get_token
+        app.dependency_overrides[get_sync_db_pg] = override_get_db
+
+        try:
+            with TestClient(app) as client:
+                resp = client.get(f"/api/v1/queries/saved/{query_id}")
+        finally:
+            RequirePermission.__call__ = original_call
+            app.dependency_overrides.clear()
+
+        assert resp.status_code == 404
 
 
 # ==================== Execute Saved Query ====================

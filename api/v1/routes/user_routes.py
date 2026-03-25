@@ -20,6 +20,12 @@ from api.v1.services.user import (
     get_all_users,
     activate_user,
 )
+from api.v1.services.keycloak_admin import (
+    create_keycloak_user,
+    disable_keycloak_user,
+    enable_keycloak_user,
+    update_keycloak_user,
+)
 from api.v1.services.auth import revoke_all_user_sessions
 from api.v1.dependencies.auth_dependency import get_current_user
 from api.v1.dependencies.permission_dependency import RequirePermission
@@ -71,6 +77,15 @@ def create_new_user(
             detail="Ya existe un usuario con este nombre de usuario",
         )
 
+    keycloak_id = create_keycloak_user(
+        email=user_data.email,
+        username=user_data.username,
+        first_name=user_data.first_name,
+        last_name=user_data.last_name,
+        temporary_password=user_data.password or "",
+        enabled=user_data.is_active,
+    )
+    user_data.keycloak_id = keycloak_id
     new_user = create_user(db, user_data, created_by=current_user.id)
     return new_user
 
@@ -127,6 +142,15 @@ def update_existing_user(
                 detail="Ya existe un usuario con este nombre de usuario",
             )
 
+    if user.keycloak_id:
+        update_keycloak_user(
+            user.keycloak_id,
+            email=user_data.email or user.email,
+            username=user_data.username or user.username,
+            first_name=user_data.first_name or user.first_name,
+            last_name=user_data.last_name or user.last_name,
+            enabled=user_data.is_active if user_data.is_active is not None else user.is_active,
+        )
     updated_user = update_user(db, user, user_data)
     return updated_user
 
@@ -155,6 +179,8 @@ def delete_existing_user(
             detail="No puede desactivar su propia cuenta",
         )
 
+    if user.keycloak_id:
+        disable_keycloak_user(user.keycloak_id)
     delete_user(db, user, soft_delete=True)
 
     # Revoke all user sessions
@@ -180,6 +206,8 @@ def activate_existing_user(
             detail="Usuario no encontrado",
         )
 
+    if user.keycloak_id:
+        enable_keycloak_user(user.keycloak_id)
     activated_user = activate_user(db, user)
     return activated_user
 

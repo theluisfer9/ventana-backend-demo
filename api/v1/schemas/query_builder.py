@@ -66,8 +66,7 @@ class SavedQueryCreate(BaseModel):
     filters: list[QueryFilter] = []
     group_by: list[str] = []
     aggregations: list[Aggregation] = []
-    institution_id: Optional[UUID] = None
-    is_shared: bool = False
+    role_ids: list[UUID] = []
     agrupar: bool = True
 
 
@@ -78,8 +77,7 @@ class SavedQueryUpdate(BaseModel):
     filters: Optional[list[QueryFilter]] = None
     group_by: Optional[list[str]] = None
     aggregations: Optional[list[Aggregation]] = None
-    institution_id: Optional[UUID] = None
-    is_shared: Optional[bool] = None
+    role_ids: Optional[list[UUID]] = None
     agrupar: Optional[bool] = None
 
 
@@ -93,9 +91,8 @@ class SavedQueryOut(BaseModel):
     filters: list[dict]
     group_by: list[str] = []
     aggregations: list[dict] = []
-    institution_id: Optional[UUID] = None
-    institution_name: Optional[str] = None
-    is_shared: bool = False
+    role_ids: list[UUID] = []
+    role_names: list[str] = []
     agrupar: bool = True
     created_by: Optional[str] = None
     created_at: str = ""
@@ -112,8 +109,7 @@ class SavedQueryListItem(BaseModel):
     column_count: int = 0
     filter_count: int = 0
     has_aggregations: bool = False
-    institution_name: Optional[str] = None
-    is_shared: bool = False
+    role_names: list[str] = []
     agrupar: bool = True
     created_by: Optional[str] = None
     created_at: str = ""
