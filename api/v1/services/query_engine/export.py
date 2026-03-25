@@ -21,8 +21,8 @@ from fpdf import FPDF
 
 # ── Helpers internos ────────────────────────────────────────────────
 
-_GEO_DEPTO_KEYWORDS = ("departamento",)
-_GEO_MUNI_KEYWORDS = ("municipio",)
+_GEO_DEPTO_KEYWORDS = ("departamento", "depto", "dpto", "department", "nombre_departamento", "nom_depto")
+_GEO_MUNI_KEYWORDS = ("municipio", "muni", "municipality", "nombre_municipio", "nom_muni")
 
 
 def _normalize_export_value(value):
@@ -35,12 +35,26 @@ def _normalize_export_value(value):
 
 
 def _find_geo_key(columns_meta: list[dict], keywords: tuple[str, ...]) -> str | None:
-    """Encuentra la key de una columna geo en columns_meta."""
+    """Encuentra la key de una columna geo en columns_meta.
+
+    Prefiere columnas que NO contengan 'codigo'/'codigo' para usar el nombre
+    descriptivo en vez del codigo numerico al agrupar.
+    """
+    candidates = []
     for c in columns_meta:
         name = c["column_name"].lower()
         if any(kw in name for kw in keywords):
-            return c["column_name"]
-    return None
+            candidates.append(c["column_name"])
+
+    if not candidates:
+        return None
+
+    # Preferir la columna sin "codigo"
+    for cand in candidates:
+        if "codigo" not in cand.lower():
+            return cand
+
+    return candidates[0]
 
 
 def _group_rows_by_geo(
@@ -240,15 +254,12 @@ def generate_excel_chunked_zip(rows: list[dict], columns_meta: list[dict], title
 
 
 def generate_pdf_chunked_zip(rows: list[dict], columns_meta: list[dict], title: str = "Consulta") -> BytesIO:
-    """Genera ZIP con PDFs de max 10K filas cada uno, sin agrupar por geo."""
+    """Genera ZIP con PDFs de max 10K filas cada uno, sin agrupar por geo.
+
+    Usa formato listado detallado (no tabla).
+    """
     headers = [c["label"] for c in columns_meta]
     keys = [c["column_name"] for c in columns_meta]
-
-    max_cols = min(len(headers), 10)
-    headers = headers[:max_cols]
-    keys = keys[:max_cols]
-
-    col_widths = _calc_col_widths(headers, keys, rows)
 
     zip_buf = BytesIO()
     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -258,13 +269,15 @@ def generate_pdf_chunked_zip(rows: list[dict], columns_meta: list[dict], title: 
             chunk_rows = rows[start:start + _CHUNK_SIZE]
 
             chunk_title = title if total_chunks == 1 else f"{title} - Parte {chunk_idx + 1}"
-            pdf = _QueryPDF(chunk_title, orientation="L", unit="mm", format="A4")
+            pdf = _QueryPDF(chunk_title, orientation="P", unit="mm", format="A4")
             pdf.alias_nb_pages()
             pdf.set_auto_page_break(auto=True, margin=20)
             pdf.add_page()
 
-            _write_pdf_table_header(pdf, headers, col_widths)
-            _write_pdf_rows(pdf, keys, col_widths, chunk_rows)
+            _write_pdf_listing_rows(
+                pdf, headers, keys, chunk_rows,
+                total_label="Total de registros",
+            )
 
             pdf_buf = BytesIO()
             pdf.output(pdf_buf)
@@ -366,30 +379,98 @@ def _write_pdf_rows(pdf: FPDF, keys: list[str], col_widths: list[float], rows: l
         pdf.ln()
 
 
+# ── PDF formato listado (estilo detallado) ──────────────────────────
+
+_LISTING_FIELDS_PER_LINE = 3  # campos por linea en el listado
+
+
+def _write_pdf_listing_header(pdf: FPDF, title: str, subtitle: str | None = None):
+    """Escribe header de seccion en formato listado."""
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.set_text_color(31, 78, 121)
+    pdf.multi_cell(0, 7, title, new_x="LMARGIN", new_y="NEXT")
+    if subtitle:
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_text_color(31, 78, 121)
+        pdf.multi_cell(0, 6, subtitle, new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(2)
+
+
+def _write_pdf_listing_rows(
+    pdf: FPDF,
+    headers: list[str],
+    keys: list[str],
+    rows: list[dict],
+    total_label: str | None = None,
+):
+    """Renderiza filas en formato listado detallado (no tabla).
+
+    Cada fila se muestra como un bloque numerado:
+      1. campo1: VALOR | campo2: VALOR | campo3: VALOR
+         campo4: VALOR | campo5: VALOR
+    """
+    if total_label:
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_text_color(0, 0, 0)
+        pdf.cell(0, 6, f"{total_label}: {len(rows)}", new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(1)
+
+    for idx, row in enumerate(rows, start=1):
+        # Linea de separacion sutil entre registros
+        if idx > 1:
+            pdf.set_draw_color(200, 200, 200)
+            pdf.line(pdf.l_margin, pdf.get_y(), pdf.l_margin + pdf.epw, pdf.get_y())
+            pdf.ln(1)
+
+        # Numero del registro en bold
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_text_color(31, 78, 121)
+        pdf.cell(8, 5, f"{idx}.", new_x="END")
+
+        # Primera linea de campos (bold, junto al numero)
+        first_line_fields = min(_LISTING_FIELDS_PER_LINE, len(keys))
+        parts = []
+        for i in range(first_line_fields):
+            val = str(_normalize_export_value(row.get(keys[i], "") or ""))
+            parts.append(f"{headers[i]}: {val}")
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_text_color(0, 0, 0)
+        pdf.multi_cell(0, 5, "  |  ".join(parts), new_x="LMARGIN", new_y="NEXT")
+
+        # Resto de campos en lineas normales (con indentacion)
+        remaining = list(zip(headers[first_line_fields:], keys[first_line_fields:]))
+        for line_start in range(0, len(remaining), _LISTING_FIELDS_PER_LINE):
+            chunk = remaining[line_start:line_start + _LISTING_FIELDS_PER_LINE]
+            parts = []
+            for label, key in chunk:
+                val = str(_normalize_export_value(row.get(key, "") or ""))
+                parts.append(f"{label}: {val}")
+            pdf.set_font("Helvetica", "", 8)
+            pdf.set_text_color(55, 55, 55)
+            pdf.cell(8, 5, "", new_x="END")  # indentacion
+            pdf.multi_cell(0, 5, "  |  ".join(parts), new_x="LMARGIN", new_y="NEXT")
+
+        pdf.ln(1)
+
+
 def generate_pdf_zip(rows: list[dict], columns_meta: list[dict], title: str = "Consulta") -> BytesIO:
-    """Genera ZIP con un .pdf por departamento, secciones por municipio."""
+    """Genera ZIP con un .pdf por departamento, secciones por municipio.
+
+    Usa formato listado detallado (no tabla).
+    """
     depto_key = _find_geo_key(columns_meta, _GEO_DEPTO_KEYWORDS)
     muni_key = _find_geo_key(columns_meta, _GEO_MUNI_KEYWORDS)
     tree = _group_rows_by_geo(rows, depto_key, muni_key)
     headers, keys = _non_geo_meta(columns_meta, depto_key, muni_key)
-
-    # Max 10 columnas
-    max_cols = min(len(headers), 10)
-    headers = headers[:max_cols]
-    keys = keys[:max_cols]
 
     zip_buf = BytesIO()
     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for depto_name in sorted(tree.keys()):
             municipios = tree[depto_name]
 
-            # Calcular anchos con todas las filas del depto
-            all_depto_rows = [r for muni_rows in municipios.values() for r in muni_rows]
-            col_widths = _calc_col_widths(headers, keys, all_depto_rows)
-
             pdf = _QueryPDF(
                 f"{title} - {depto_name}",
-                orientation="L", unit="mm", format="A4",
+                orientation="P", unit="mm", format="A4",
             )
             pdf.alias_nb_pages()
             pdf.set_auto_page_break(auto=True, margin=20)
@@ -398,14 +479,15 @@ def generate_pdf_zip(rows: list[dict], columns_meta: list[dict], title: str = "C
                 muni_rows = municipios[muni_name]
                 pdf.add_page()
 
-                # Subtitulo del municipio
-                pdf.set_font("Helvetica", "B", 10)
-                pdf.set_text_color(31, 78, 121)
-                pdf.cell(0, 8, f"Municipio: {muni_name}", new_x="LMARGIN", new_y="NEXT")
-                pdf.ln(2)
-
-                _write_pdf_table_header(pdf, headers, col_widths)
-                _write_pdf_rows(pdf, keys, col_widths, muni_rows)
+                _write_pdf_listing_header(
+                    pdf,
+                    title=f"{title} - {depto_name}",
+                    subtitle=f"Municipio: {muni_name}",
+                )
+                _write_pdf_listing_rows(
+                    pdf, headers, keys, muni_rows,
+                    total_label="Total de registros",
+                )
 
             pdf_buf = BytesIO()
             pdf.output(pdf_buf)

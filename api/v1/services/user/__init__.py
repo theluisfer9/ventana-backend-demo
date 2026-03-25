@@ -1,11 +1,21 @@
 from typing import Optional, List, Tuple
 from uuid import UUID
+import logging
+
 from sqlalchemy.orm import Session
 from sqlalchemy import select, func, or_
 
 from api.v1.models.user import User
 from api.v1.schemas.user import UserCreate, UserCreateByAdmin, UserUpdate, UserFilters
 from api.v1.auth.password import hash_password
+from api.v1.services.keycloak_admin import (
+    create_keycloak_user,
+    update_keycloak_user,
+    disable_keycloak_user,
+    enable_keycloak_user,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def get_user_by_id(db: Session, user_id: UUID) -> Optional[User]:
@@ -31,7 +41,7 @@ def create_user(
     created_by: Optional[UUID] = None,
 ) -> User:
     """
-    Create a new user.
+    Create a new user. Si Keycloak esta habilitado, tambien lo crea alla.
     """
     data = user_data.model_dump(exclude={"password"})
 
@@ -42,6 +52,26 @@ def create_user(
 
     if created_by:
         data["created_by"] = created_by
+
+    # Crear en Keycloak si no viene keycloak_id
+    if not data.get("keycloak_id"):
+        try:
+            kc_id = create_keycloak_user(
+                username=user_data.username,
+                email=user_data.email,
+                first_name=user_data.first_name,
+                last_name=user_data.last_name,
+                password=password,
+                enabled=data.get("is_active", True),
+            )
+            if kc_id:
+                data["keycloak_id"] = kc_id
+        except Exception:
+            logger.warning(
+                "No se pudo crear usuario en Keycloak: %s",
+                user_data.username,
+                exc_info=True,
+            )
 
     user = User(**data)
     db.add(user)
@@ -56,9 +86,29 @@ def update_user(
     update_data: UserUpdate,
 ) -> User:
     """
-    Update an existing user.
+    Update an existing user. Sincroniza cambios relevantes a Keycloak.
     """
-    for key, value in update_data.model_dump(exclude_unset=True).items():
+    changes = update_data.model_dump(exclude_unset=True)
+
+    # Sincronizar con Keycloak
+    if user.keycloak_id:
+        try:
+            update_keycloak_user(
+                user.keycloak_id,
+                username=changes.get("username"),
+                email=changes.get("email"),
+                first_name=changes.get("first_name"),
+                last_name=changes.get("last_name"),
+                enabled=changes.get("is_active"),
+            )
+        except Exception:
+            logger.warning(
+                "No se pudo actualizar usuario en Keycloak: %s",
+                user.keycloak_id,
+                exc_info=True,
+            )
+
+    for key, value in changes.items():
         setattr(user, key, value)
 
     db.commit()
@@ -79,7 +129,19 @@ def update_user_password(db: Session, user: User, new_password: str) -> User:
 def delete_user(db: Session, user: User, soft_delete: bool = True) -> bool:
     """
     Delete a user. By default performs soft delete (deactivation).
+    Desactiva tambien en Keycloak.
     """
+    # Desactivar en Keycloak
+    if user.keycloak_id:
+        try:
+            disable_keycloak_user(user.keycloak_id)
+        except Exception:
+            logger.warning(
+                "No se pudo desactivar usuario en Keycloak: %s",
+                user.keycloak_id,
+                exc_info=True,
+            )
+
     if soft_delete:
         user.is_active = False
         db.commit()
@@ -151,7 +213,18 @@ def get_all_users(
 
 
 def activate_user(db: Session, user: User) -> User:
-    """Activate a user"""
+    """Activate a user. Reactiva tambien en Keycloak."""
+    # Reactivar en Keycloak
+    if user.keycloak_id:
+        try:
+            enable_keycloak_user(user.keycloak_id)
+        except Exception:
+            logger.warning(
+                "No se pudo reactivar usuario en Keycloak: %s",
+                user.keycloak_id,
+                exc_info=True,
+            )
+
     user.is_active = True
     db.commit()
     db.refresh(user)

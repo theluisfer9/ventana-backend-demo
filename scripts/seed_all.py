@@ -129,7 +129,9 @@ print(f"[OK] Instituciones: {list(inst_objs.keys())}")
 admin_role = role_objs["ADMIN"]
 mides_inst = inst_objs.get("MIDES")
 
-existing_admin = db.query(User).filter(User.username == "admin").first()
+existing_admin = db.query(User).filter(
+    (User.username == "admin") | (User.email == "admin@ventanamagica.org")
+).first()
 if not existing_admin:
     admin_user = User(
         email="admin@ventanamagica.org",

@@ -1,0 +1,71 @@
+{
+  "realm": "ventana-magica-dev",
+  "enabled": true,
+  "displayName": "Ventana Magica Dev",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "rememberMe": true,
+  "roles": {
+    "realm": [
+      {
+        "name": "login_access",
+        "description": "Permite iniciar sesion en la app"
+      },
+      {
+        "name": "admin",
+        "description": "Rol administrativo frontend"
+      },
+      {
+        "name": "user",
+        "description": "Rol general frontend"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "sicoweb-frontend",
+      "name": "Ventana Magica Frontend",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": [
+        "http://localhost:5173/*",
+        "http://127.0.0.1:5173/*"
+      ],
+      "webOrigins": [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173"
+      ],
+      "defaultClientScopes": [
+        "profile",
+        "email",
+        "roles"
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "devadmin",
+      "email": "admin@ventanamagica.org",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Admin",
+      "lastName": "User",
+      "realmRoles": [
+        "login_access",
+        "admin"
+      ],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Admin123!",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}
