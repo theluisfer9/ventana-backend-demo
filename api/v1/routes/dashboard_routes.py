@@ -5,7 +5,6 @@ from api.v1.config.database import get_sync_db_pg, get_ch_client
 from api.v1.dependencies.auth_dependency import get_current_active_user
 from api.v1.auth.permissions import PermissionCode
 from api.v1.models.user import User
-from api.v1.models.data_source import DataSource, RoleDataSource
 from api.v1.schemas.dashboard import (
     AdminDashboardStats,
     InstitutionalDashboardStats,
@@ -35,26 +34,21 @@ def _is_admin(user: User) -> bool:
 
 
 def _get_user_base_filters(user: User, db: Session) -> tuple[list[str], str, list[str]] | None:
-    """Get base_filter_columns and intervention_columns for the user's assigned datasource."""
-    if not user.role_id:
-        return None
-    ds = (
-        db.query(DataSource)
-        .join(RoleDataSource, RoleDataSource.datasource_id == DataSource.id)
-        .filter(
-            RoleDataSource.role_id == user.role_id,
-            DataSource.is_active == True,
-        )
-        .first()
-    )
-    if not ds or not ds.base_filter_columns:
-        return None
-    # Buscar intervention_columns del preset institucional
+    """Get dashboard scoping for the current institutional user."""
     from api.v1.config.institutional_presets import INSTITUTIONAL_PRESETS
+
     institution = user.institution
     preset = INSTITUTIONAL_PRESETS.get(institution.code, {}) if institution else {}
-    intervention_cols = preset.get("intervention_columns", [])
-    return ds.base_filter_columns, ds.base_filter_logic or "OR", intervention_cols
+
+    preset_base_filters = preset.get("base_filter_columns", [])
+    if not preset_base_filters:
+        return None
+
+    return (
+        preset_base_filters,
+        preset.get("base_filter_logic", "OR"),
+        preset.get("intervention_columns", []),
+    )
 
 
 @router.get("/")
