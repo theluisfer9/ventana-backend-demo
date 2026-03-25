@@ -172,7 +172,7 @@ def list_available_datasources(
     current_user: User = Depends(_query_permission),
     db: Session = Depends(get_sync_db_pg),
 ):
-    query = db.query(DataSource).options(joinedload(DataSource.columns_def), joinedload(DataSource.institution)).filter(DataSource.is_active == True)
+    query = db.query(DataSource).options(joinedload(DataSource.columns_def)).filter(DataSource.is_active == True)
     if not _is_admin(current_user):
         accessible_ids = db.query(RoleDataSource.datasource_id).filter(
             RoleDataSource.role_id == current_user.role_id,
@@ -185,11 +185,6 @@ def list_available_datasources(
             "code": ds.code,
             "name": ds.name,
             "description": ds.description,
-            "institution": {
-                "id": str(ds.institution.id),
-                "code": ds.institution.code,
-                "name": ds.institution.name,
-            } if ds.institution else None,
             "columns": [
                 {
                     "column_name": c.column_name,
@@ -591,8 +586,6 @@ def save_query(
         filters=filters_dicts,
         group_by=body.group_by or [],
         aggregations=agg_dicts,
-        institution_id=None,
-        is_shared=False,
         agrupar=body.agrupar,
     )
     sq.roles = roles

@@ -31,16 +31,10 @@ class DataSource(BasePG):
     ch_table = Column(String(200), nullable=False)
     base_filter_columns = Column(JSONB, nullable=False, default=list, server_default="[]")
     base_filter_logic = Column(String(3), nullable=False, default="OR", server_default="OR")
-    institution_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("institutions.id", ondelete="SET NULL"),
-        nullable=True,
-    )
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
-    institution = relationship("Institution", backref="data_sources")
     columns_def = relationship(
         "DataSourceColumn",
         back_populates="data_source",
@@ -99,19 +93,12 @@ class SavedQuery(BasePG):
     filters = Column(JSONB, nullable=False, default=list)
     group_by = Column(JSONB, nullable=False, default=list)
     aggregations = Column(JSONB, nullable=False, default=list)
-    institution_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("institutions.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    is_shared = Column(Boolean, default=False)
     agrupar = Column(Boolean, default=True, nullable=False, server_default="true")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     user = relationship("User", backref="saved_queries")
     data_source = relationship("DataSource", back_populates="saved_queries")
-    institution = relationship("Institution", backref="shared_queries")
     role_assignments = relationship(
         "SavedQueryRole",
         back_populates="saved_query",

@@ -49,7 +49,6 @@ class DataSourceCreate(BaseModel):
     ch_table: str
     base_filter_columns: list[str] = []
     base_filter_logic: Literal["AND", "OR"] = "OR"
-    institution_id: Optional[UUID] = None
 
 
 class DataSourceUpdate(BaseModel):
@@ -58,7 +57,6 @@ class DataSourceUpdate(BaseModel):
     ch_table: Optional[str] = None
     base_filter_columns: Optional[list[str]] = None
     base_filter_logic: Optional[Literal["AND", "OR"]] = None
-    institution_id: Optional[UUID] = None
     is_active: Optional[bool] = None
 
 
@@ -70,7 +68,6 @@ class DataSourceOut(BaseModel):
     ch_table: str
     base_filter_columns: list[str] = []
     base_filter_logic: str = "OR"
-    institution_id: Optional[UUID] = None
     is_active: bool
     columns: list[DataSourceColumnOut] = []
 

@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func as sa_func
 from api.v1.models.user import User
 from api.v1.models.institution import Institution
-from api.v1.models.data_source import DataSource, SavedQuery
+from api.v1.models.data_source import DataSource, RoleDataSource, SavedQuery
 
 
 # ── PostgreSQL queries ───────────────────────────────────────────────
@@ -30,11 +30,12 @@ def query_system_stats(db: Session) -> dict:
 
     queries_by_inst = dict(
         db.query(
-            SavedQuery.institution_id,
+            User.institution_id,
             sa_func.count(SavedQuery.id),
         )
-        .filter(SavedQuery.institution_id.isnot(None))
-        .group_by(SavedQuery.institution_id)
+        .join(User, User.id == SavedQuery.user_id)
+        .filter(User.institution_id.isnot(None))
+        .group_by(User.institution_id)
         .all()
     )
 
@@ -68,12 +69,19 @@ def query_institutional_pg_stats(db: Session, institution_id) -> dict:
     """Stats PG para una institucion especifica."""
     total_queries = (
         db.query(sa_func.count(SavedQuery.id))
-        .filter(SavedQuery.institution_id == institution_id)
+        .join(User, User.id == SavedQuery.user_id)
+        .filter(User.institution_id == institution_id)
         .scalar() or 0
     )
     total_ds = (
-        db.query(sa_func.count(DataSource.id))
-        .filter(DataSource.institution_id == institution_id, DataSource.is_active == True)
+        db.query(sa_func.count(sa_func.distinct(DataSource.id)))
+        .join(RoleDataSource, RoleDataSource.datasource_id == DataSource.id)
+        .join(User, User.role_id == RoleDataSource.role_id)
+        .filter(
+            User.institution_id == institution_id,
+            User.is_active == True,
+            DataSource.is_active == True,
+        )
         .scalar() or 0
     )
     return {"total_consultas": total_queries, "total_fuentes_datos": total_ds}

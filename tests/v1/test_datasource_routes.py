@@ -4,10 +4,46 @@ Uses authenticated_admin_client which bypasses RequirePermission.
 """
 import pytest
 from uuid import uuid4
+from fastapi.testclient import TestClient
+
+from main import app
+from api.v1.config.database import get_sync_db_pg
+from api.v1.dependencies.auth_dependency import get_current_user, get_token_from_header
+from api.v1.models.data_source import DataSource
+
+
+def _seed_datasource_direct(db_session, code="TEST_DS", name="Test DataSource"):
+    ds = DataSource(
+        code=code,
+        name=name,
+        ch_table="rsh.test_table",
+        base_filter_columns=["prog_test"],
+        base_filter_logic="OR",
+        is_active=True,
+    )
+    db_session.add(ds)
+    db_session.commit()
+    db_session.refresh(ds)
+    return ds
 
 
 class TestDataSourceCRUD:
     """Full lifecycle: create, list, get, update, soft-delete."""
+
+    def _client_for_user(self, db_session, user):
+        def override_get_db():
+            yield db_session
+
+        def override_get_current_user():
+            return user
+
+        def override_get_token():
+            return "mock_token"
+
+        app.dependency_overrides[get_sync_db_pg] = override_get_db
+        app.dependency_overrides[get_current_user] = override_get_current_user
+        app.dependency_overrides[get_token_from_header] = override_get_token
+        return TestClient(app)
 
     def _create_ds(self, client, code="TEST_DS", name="Test DataSource"):
         return client.post("/api/v1/datasources/", json={
@@ -29,6 +65,7 @@ class TestDataSourceCRUD:
         assert data["base_filter_logic"] == "OR"
         assert data["is_active"] is True
         assert data["columns"] == []
+        assert "institution_id" not in data
 
     def test_create_datasource_no_filter(self, authenticated_admin_client):
         resp = authenticated_admin_client.post("/api/v1/datasources/", json={
@@ -59,12 +96,31 @@ class TestDataSourceCRUD:
         assert ds_a["ch_table"] == "rsh.test_table"
         assert ds_a["base_filter_columns"] == ["prog_test"]
 
+    def test_regular_user_cannot_list_datasources(self, db_session, test_regular_user):
+        with self._client_for_user(db_session, test_regular_user) as client:
+            resp = client.get("/api/v1/datasources/")
+        app.dependency_overrides.clear()
+        assert resp.status_code == 403
+
     def test_get_datasource(self, authenticated_admin_client):
         create_resp = self._create_ds(authenticated_admin_client)
         ds_id = create_resp.json()["data"]["id"]
         resp = authenticated_admin_client.get(f"/api/v1/datasources/{ds_id}")
         assert resp.status_code == 200
         assert resp.json()["data"]["code"] == "TEST_DS"
+        assert "institution_id" not in resp.json()["data"]
+
+    def test_regular_user_cannot_get_datasource(
+        self,
+        db_session,
+        test_regular_user,
+    ):
+        ds = _seed_datasource_direct(db_session, code="REGULAR_FORBIDDEN_DS")
+        with self._client_for_user(db_session, test_regular_user) as client:
+            resp = client.get(f"/api/v1/datasources/{ds.id}")
+        app.dependency_overrides.clear()
+
+        assert resp.status_code == 403
 
     def test_get_nonexistent_returns_404(self, authenticated_admin_client):
         resp = authenticated_admin_client.get(f"/api/v1/datasources/{uuid4()}")

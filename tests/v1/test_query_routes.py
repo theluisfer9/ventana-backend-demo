@@ -26,7 +26,6 @@ def _seed_datasource(db_session, institution_id=None, code="QRY_DS"):
         ch_table="rsh.test_table",
         base_filter_columns=["prog_test"],
         base_filter_logic="OR",
-        institution_id=institution_id,
         is_active=True,
     )
     db_session.add(ds)
@@ -121,6 +120,8 @@ class TestListAvailableDataSources:
         ds = data[0]
         assert ds["code"] == "QRY_DS"
         assert len(ds["columns"]) == 3
+        assert "institution_id" not in ds
+        assert "institution" not in ds
 
     def test_inactive_datasources_hidden(self, authenticated_admin_client, db_session):
         ds = _seed_datasource(db_session, code="INACTIVE_DS")
@@ -288,6 +289,8 @@ class TestSavedQueries:
         assert data["name"] == "Mi Consulta"
         assert "id" in data
         assert data["role_names"] == []
+        assert "institution_id" not in data
+        assert "is_shared" not in data
 
     def test_save_query_persists_agrupar(self, authenticated_admin_client, db_session, test_institution):
         ds = _seed_datasource(db_session, institution_id=test_institution.id)
@@ -467,8 +470,6 @@ class TestSavedQueries:
             group_by=[],
             aggregations=[],
             agrupar=True,
-            institution_id=None,
-            is_shared=False,
         )
         db_session.add(saved_query)
         db_session.commit()
@@ -502,8 +503,6 @@ class TestSavedQueries:
             group_by=[],
             aggregations=[],
             agrupar=True,
-            institution_id=None,
-            is_shared=False,
         )
         db_session.add(saved_query)
         db_session.flush()

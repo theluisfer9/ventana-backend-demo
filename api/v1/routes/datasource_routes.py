@@ -4,7 +4,6 @@ from sqlalchemy.orm import Session, joinedload
 from api.v1.config.database import get_sync_db_pg, get_ch_client
 from api.v1.services.query_engine.engine import _safe_identifier
 from api.v1.dependencies.permission_dependency import RequirePermission
-from api.v1.dependencies.auth_dependency import get_current_active_user
 from api.v1.auth.permissions import PermissionCode
 from api.v1.models.user import User
 from api.v1.models.data_source import DataSource, DataSourceColumn, ColumnDataType, ColumnCategory
@@ -15,14 +14,6 @@ from api.v1.schemas.data_source import (
 
 router = APIRouter(prefix="/datasources", tags=["DataSources (Admin)"])
 
-
-def _is_admin(user: User) -> bool:
-    if not user.role:
-        return False
-    user_permissions = {p.code for p in user.role.permissions}
-    return PermissionCode.SYSTEM_CONFIG.value in user_permissions
-
-
 def _get_datasource(ds_id: UUID, db: Session) -> DataSource:
     ds = db.query(DataSource).options(joinedload(DataSource.columns_def)).filter(DataSource.id == ds_id).first()
     if not ds:
@@ -32,16 +23,15 @@ def _get_datasource(ds_id: UUID, db: Session) -> DataSource:
 
 @router.get("/", response_model=list[DataSourceListItem])
 def list_datasources(
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(RequirePermission(PermissionCode.DATASOURCES_MANAGE)),
     db: Session = Depends(get_sync_db_pg),
 ):
-    query = db.query(DataSource).options(joinedload(DataSource.columns_def))
-    if not _is_admin(current_user):
-        if current_user.institution_id:
-            query = query.filter(DataSource.institution_id == current_user.institution_id)
-        else:
-            query = query.filter(DataSource.id == None)  # no institution, no access
-    sources = query.order_by(DataSource.code).all()
+    sources = (
+        db.query(DataSource)
+        .options(joinedload(DataSource.columns_def))
+        .order_by(DataSource.code)
+        .all()
+    )
     return [
         DataSourceListItem(
             id=ds.id,
@@ -283,13 +273,10 @@ def auto_discover_columns(
 @router.get("/{ds_id}", response_model=DataSourceOut)
 def get_datasource(
     ds_id: UUID,
-    current_user: User = Depends(get_current_active_user),
+    current_user: User = Depends(RequirePermission(PermissionCode.DATASOURCES_MANAGE)),
     db: Session = Depends(get_sync_db_pg),
 ):
     ds = _get_datasource(ds_id, db)
-    if not _is_admin(current_user):
-        if not (current_user.institution_id and ds.institution_id and current_user.institution_id == ds.institution_id):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tiene acceso a este DataSource")
     return _datasource_to_out(ds)
 
 
@@ -394,7 +381,6 @@ def _datasource_to_out(ds: DataSource) -> DataSourceOut:
         ch_table=ds.ch_table,
         base_filter_columns=ds.base_filter_columns or [],
         base_filter_logic=ds.base_filter_logic or "OR",
-        institution_id=ds.institution_id,
         is_active=ds.is_active,
         columns=[_column_to_out(c) for c in (ds.columns_def or [])],
     )
