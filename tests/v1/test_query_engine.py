@@ -177,6 +177,13 @@ class TestBuildWhere:
         where, params = build_where(None, None, filters, self._col_map())
         assert "Int8" in where
 
+    def test_boolean_values_are_normalized_to_int8(self):
+        filters = [{"column": "estufa_mejorada", "op": "eq", "value": True}]
+        where, params = build_where(None, None, filters, self._col_map())
+        assert "Int8" in where
+        assert params["p_0"] == 1
+        assert type(params["p_0"]) is int
+
 
 # ==================== execute_query ====================
 

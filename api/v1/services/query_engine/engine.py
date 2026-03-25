@@ -35,6 +35,21 @@ def _safe_identifier(name: str) -> str:
     return name
 
 
+def _normalize_param_value(data_type, value):
+    if data_type == "BOOLEAN":
+        if isinstance(value, bool):
+            return 1 if value else 0
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in ("true", "1", "verdadero", "si", "sí"):
+                return 1
+            if lowered in ("false", "0", "falso", "no"):
+                return 0
+        if isinstance(value, int):
+            return 1 if value else 0
+    return value
+
+
 def build_where_from_columns(columns: list[str], logic: str) -> str | None:
     """Build a WHERE clause fragment from structured base_filter_columns.
 
@@ -97,7 +112,8 @@ def build_where(
         op = f["op"]
         value = f["value"]
         col_def = columns_map[f["column"]]
-        ch_type = _CH_TYPE_MAP.get(col_def.data_type.value if hasattr(col_def.data_type, 'value') else col_def.data_type, "String")
+        data_type = col_def.data_type.value if hasattr(col_def.data_type, 'value') else col_def.data_type
+        ch_type = _CH_TYPE_MAP.get(data_type, "String")
         param_name = f"p_{i}"
 
         if op == "in":
@@ -107,7 +123,7 @@ def build_where(
                 )
                 conditions.append(f"{col_name} IN ({placeholders})")
                 for j, v in enumerate(value):
-                    params[f"{param_name}_{j}"] = v
+                    params[f"{param_name}_{j}"] = _normalize_param_value(data_type, v)
             continue
 
         if op == "like":
@@ -117,7 +133,7 @@ def build_where(
 
         sql_op = _OP_MAP.get(op, "=")
         conditions.append(f"{col_name} {sql_op} {{{param_name}:{ch_type}}}")
-        params[param_name] = value
+        params[param_name] = _normalize_param_value(data_type, value)
 
     where = " AND ".join(conditions) if conditions else "1=1"
     return where, params
