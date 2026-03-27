@@ -1,203 +1,191 @@
-<!-- Readme v0.01 -->
-<div align="center">
-  <a href="#">
-    <img src="apikit-logo.png" alt="Logo" width="450" height=200">
-  </a>
-  <p align="center">
-      APIKit no es una librería ni un framework adicional, es una plantilla de arquitectura limpia y escalable para proyectos FastAPI, inspirada en principios de diseño como separación de responsabilidades, modularidad y mantenibilidad.
-    <br />
-  </p>
+# Ventana Backend — Documentación Técnica
 
-  [![Python](https://img.shields.io/badge/Python-v3.11.9-yellow?logo=python)](https://www.python.org)
-  [![FastAPI](https://img.shields.io/badge/FastAPI-v0.115.14-green?logo=fastapi)](https://fastapi.tiangolo.com/)
-  [![Pydantic](https://img.shields.io/badge/Pydantic-v2.11.7-orange?logo=pydantic)](https://docs.pydantic.dev/)
-  [![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-v2.0.41-red?logo=sqlalchemy)](https://www.sqlalchemy.org/)
-  [![PyTest](https://img.shields.io/badge/Pytest-v8.4.1-red?logo=pytest)](https://docs.pytest.org/en/stable/)
+[![Python](https://img.shields.io/badge/Python-3.11.9-yellow?logo=python)](https://www.python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115.14-green?logo=fastapi)](https://fastapi.tiangolo.com/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-blue?logo=postgresql)](https://www.postgresql.org/)
+[![ClickHouse](https://img.shields.io/badge/ClickHouse-RSH-orange)](https://clickhouse.com/)
+[![Pytest](https://img.shields.io/badge/Pytest-8.4.1-red?logo=pytest)](https://docs.pytest.org/)
 
-</div>
+API REST para el sistema **Ventana Mágica** — plataforma de gestión y consulta de beneficiarios del Registro Social de Hogares (RSH) de Guatemala. Permite a instituciones gubernamentales consultar, filtrar y exportar datos de hogares según su alcance institucional.
 
-  ## 📁 Estructura del Proyecto
+---
 
-  ```
-  alembic                   # Migraciones
-  api/
-  ├── config/               # Configuraciones globales
-  ├── utils/                # Funciones auxiliares generales
-  ├── v1/                   # Versionamiento de la API
-  │   ├── assets/           # Recursos estáticos (opcional)
-  │   ├── auth/             # Autenticación y permisos
-  │   ├── config/           # Configuraciones específicas de v1
-  │   ├── dependencies/     # Inyección de dependencias para FastAPI
-  │   ├── handlers/         # Lógica que maneja las peticiones
-  │   ├── middleware/       # Middleware personalizados
-  │   ├── models/           # Modelos ORM
-  │   ├── routes/           # Definición de rutas y endpoints
-  │   ├── schemas/          # Validaciones con Pydantic
-  │   ├── services/         # Lógica de negocio
-  │   ├── utils/            # Utilidades internas de v1
-  │   └── constants.py      # Constantes
+## Tabla de Contenidos
 
-  tests/                 # Pruebas automatizadas
-  ├── v1/                # Pruebas para la API v1
-  │   ├── conftest.py
-  │   └── test_tickets.py
+- [Visión General](#visión-general)
+- [Inicio Rápido](#inicio-rápido)
+- [Estructura del Proyecto](#estructura-del-proyecto)
+- [Stack Tecnológico](#stack-tecnológico)
+- [Documentación Detallada](#documentación-detallada)
 
-  .env-example              # Ejemplo de variables de entorno
-  .gitignore
-  alembic.ini               # Configuracion de alembic
-  apikit-logo.png           # Logo (opcional)
-  apikit.png                # Imagen ilustrativa (opcional)
-  docker-compose.yml        # Docker Compose setup
-  dockerfile                # Dockerfile para la API
-  main.py                   # Punto de entrada
-  pytest.ini                # Configuración de Pytest
-  README.md                 # Documentación principal
-  requirements.txt          # Dependencias de Python
-  test.db                   # Base de datos para testing
-  traefik-config.yml        # Configuración de Traefik
-  ```
+---
 
-  ---
+## Visión General
 
-  ## 🚀 Inicio Rápido
+El backend expone una API REST bajo `/api/v1` compuesta por los siguientes módulos principales:
 
-  1. **Clonar el repositorio:**
+| Módulo | Prefijo | Descripción |
+|--------|---------|-------------|
+| Autenticación | `/auth` | Login, refresh token, logout, perfil de usuario |
+| Usuarios | `/users` | CRUD de usuarios del sistema |
+| Roles y Permisos | `/roles` | Gestión de roles RBAC y sus permisos |
+| Instituciones | `/institutions` | CRUD de instituciones + API tokens M2M |
+| Beneficiarios RSH | `/beneficiarios` | Consulta de hogares del RSH desde ClickHouse |
+| Consulta Institucional | `/consulta` | Vista de datos scoped al universo de la institución |
+| Integración M2M | `/integration/consulta` | Acceso vía API Token para sistemas externos |
+| DataSources (Admin) | `/datasources` | Gestión de fuentes de datos ClickHouse |
+| Query Builder | `/queries` | Consultas ad-hoc y guardadas sobre datasources |
+| Dashboard | `/dashboard` | Estadísticas globales e institucionales |
 
-  ```bash
-  git clone git@srv-git.mides.gob.gt:basemides/apikit.git
-  cd apikit
-  ```
+---
 
-  2. **Crear entorno virtual e instalar dependencias:**
+## Inicio Rápido
+
+### 1. Requisitos previos
+
+- Python 3.11+
+- PostgreSQL 16 (o Docker)
+- Acceso al servidor ClickHouse RSH
+
+### 2. Clonar e instalar
 
 ```bash
+git clone <repo-url>
+cd ventana-backend-demo
+
 python -m venv .venv
-```
+source .venv/bin/activate   # Linux/macOS
+# .venv\Scripts\activate    # Windows
 
-```bash
-# Linux/macOS
-source .venv/bin/activate
-
-# Windows
-.venv\Scripts\activate
-```
-
-```bash
 pip install -r requirements.txt
 ```
 
-  3. **Configurar entorno:**
+### 3. Configurar variables de entorno
 
-  - Copiar `.env-example` como `.env`
-  - Modificar los valores según sea necesario
+Edita el archivo `.env` con los valores de tu entorno. Variables mínimas necesarias:
 
-  4. **Ejecutar el servidor:**
+```env
+ENV=LOCAL
+JWT_SECRET_KEY=<clave-minimo-32-chars>
 
-  ```bash
-  uvicorn main:app --reload
-  ```
+# PostgreSQL
+LOCAL_DB_ACTIVA=true
+LOCAL_DB_USERNAME=dev_pnud
+LOCAL_DB_PASSWORD=<password>
+LOCAL_DB_CONTAINER_NAME=localhost
+LOCAL_DB_PORT=5432
+LOCAL_DB_NAME=db_ventana_pnud
 
-  5. **Acceder a la documentación interactiva:**
+# ClickHouse
+LOCAL_CH_ACTIVA=true
+LOCAL_CH_HOST=<host>
+LOCAL_CH_PORT=8123
+LOCAL_CH_USER=<usuario>
+LOCAL_CH_PASSWORD=<password>
+LOCAL_CH_DATABASE=rsh
+```
 
-  - Swagger UI: [http://localhost:8000/docs](http://localhost:8000/docs)
+### 4. Levantar PostgreSQL con Docker
 
-  ---
+```bash
+docker-compose up -d
+```
 
-  ## 💪 Infraestructura
+### 5. Ejecutar migraciones
 
+```bash
+alembic upgrade head
+```
 
-  - [Docker & Docker Compose](https://www.docker.com/) - Contenedores
-  - [Traefik - v3.3](https://doc.traefik.io/traefik/v3.3/) - Proxy reverso
+### 6. Iniciar el servidor
 
-  ---
+```bash
+uvicorn main:app --reload
+```
 
-  ## Dependencias del Proyecto
+Swagger UI disponible en: `http://localhost:8000/docs`
 
-  ### 🔧 Dependencias Principales
+---
 
-  | Dependencia | Versión | Descripción |
-  |-------------|---------|-------------|
-  | **FastAPI** | `0.115.14` | Framework web moderno y rápido para APIs REST |
-  | **Pydantic** | `2.11.7` | Validación de datos y serialización con Python type hints |
-  | **SQLAlchemy** | `2.0.41` | ORM (Object-Relational Mapping) para bases de datos |
-  | **Alembic** | `1.16.5` | Herramienta para migraciones de base de datos |
-  | **Uvicorn** | `0.35.0` | Servidor ASGI para FastAPI |
+## Estructura del Proyecto
 
-  ### 🗄️ Bases de Datos
+```
+ventana-backend-demo/
+├── main.py                        # Punto de entrada: monta la app, routers y middlewares
+├── alembic.ini                    # Configuración de Alembic
+├── requirements.txt               # Dependencias Python
+├── docker-compose.yml             # PostgreSQL en Docker para desarrollo
+├── dockerfile                     # Imagen de la API
+├── traefik-config.yml             # Configuración del proxy reverso Traefik
+├── pytest.ini                     # Configuración de Pytest
+│
+├── alembic/
+│   └── versions/                  # Migraciones de base de datos
+│
+├── api/
+│   ├── config/
+│   │   └── app.py                 # APP_NAME, VERSION
+│   ├── utils/                     # Validación de variables de entorno
+│   └── v1/
+│       ├── auth/
+│       │   ├── jwt_handler.py     # Creación y verificación de JWT
+│       │   ├── password.py        # Hash y verificación de contraseñas (bcrypt)
+│       │   └── permissions.py     # PermissionCode enum + ROLE_PERMISSIONS
+│       ├── config/
+│       │   ├── database.py        # Conexiones a PostgreSQL, SQL Server y ClickHouse
+│       │   └── institutional_presets.py  # Presets de consulta por institución
+│       ├── dependencies/          # Dependencias de FastAPI (auth, permisos, filtros)
+│       ├── handlers/              # Manejadores globales de excepciones
+│       ├── middleware/
+│       │   ├── response_wrapper.py       # Envuelve respuestas en {result, message, data}
+│       │   └── encryption.py             # Cifrado AES-GCM opcional de respuestas
+│       ├── models/                # Modelos SQLAlchemy (PostgreSQL)
+│       ├── routes/                # Routers y definición de endpoints HTTP
+│       ├── schemas/               # Schemas Pydantic (validación y serialización)
+│       ├── services/              # Lógica de negocio
+│       │   ├── rsh/               # Queries RSH sobre ClickHouse
+│       │   ├── consulta/          # Queries institucionales sobre ClickHouse
+│       │   ├── query_engine/      # Motor de consultas ad-hoc
+│       │   ├── dashboard/         # Queries del dashboard
+│       │   └── ...                # Servicios por dominio
+│       └── utils/
+│
+├── scripts/                       # Scripts de seed y administración
+├── tests/
+│   └── v1/
+│       ├── conftest.py            # Fixtures (BD de prueba PostgreSQL)
+│       └── test_*.py              # Tests por dominio
+└── docs/                          # Documentación técnica
+```
 
-  | Dependencia | Versión | Descripción |
-  |-------------|---------|-------------|
-  | **psycopg2** | `2.9.10` | Adaptador PostgreSQL para Python |
-  | **asyncpg** | `0.30.0` | Cliente PostgreSQL asíncrono |
-  | **aiosqlite** | `0.21.0` | Adaptador SQLite asíncrono |
-  | **pyodbc** | `5.1.0` | Adaptador ODBC para SQL Server |
+---
 
-  ### 🧪 Testing y Desarrollo
+## Stack Tecnológico
 
-  | Dependencia | Versión | Descripción |
-  |-------------|---------|-------------|
-  | **pytest** | `8.4.1` | Framework para pruebas automatizadas |
-  | **black** | `25.1.0` | Formateador de código Python |
-  | **httpx** | `0.28.1` | Cliente HTTP para testing de APIs |
+| Capa | Tecnología | Versión |
+|------|-----------|---------|
+| Framework web | FastAPI | 0.115.14 |
+| ORM | SQLAlchemy | 2.0.41 |
+| Migraciones | Alembic | 1.16.5 |
+| BD operacional | PostgreSQL | 16 |
+| BD analítica | ClickHouse | — |
+| Autenticación | python-jose + passlib/bcrypt | 3.3.0 / 1.7.4 |
+| Cifrado respuestas | cryptography (AES-GCM) | 45.0.6 |
+| Exportación | openpyxl + fpdf2 | 3.1.5 / 2.8.3 |
+| Validación schemas | Pydantic | 2.11.7 |
+| Paginación | fastapi-pagination | 0.14.0 |
+| Testing | pytest + httpx | 8.4.1 / 0.28.1 |
+| Servidor ASGI | Uvicorn | 0.35.0 |
+| Proxy reverso | Traefik | v3 |
 
-  ### 🔐 Seguridad y Autenticación
+---
 
-  | Dependencia | Versión | Descripción |
-  |-------------|---------|-------------|
-  | **python-jose** | `3.5.0` | Implementación de JWT (JSON Web Tokens) |
-  | **cryptography** | `45.0.6` | Librería de criptografía |
-  | **python-multipart** | `0.0.20` | Soporte para formularios multipart |
+## Documentación Detallada
 
-  ### ⚙️ Utilidades y Configuración
-
-  | Dependencia | Versión | Descripción |
-  |-------------|---------|-------------|
-  | **python-decouple** | `3.8` | Separación de configuración del código |
-  | **fastapi-pagination** | `0.14.0` | Paginación para FastAPI |
-  | **email-validator** | `2.2.0` | Validación de direcciones de email |
-  | **rich** | `14.0.0` | Formateo de texto en terminal |
-
-  ### 🔄 Actualización de Dependencias
-
-  Para actualizar las dependencias a sus versiones más recientes:
-
-  ```bash
-  pip install --upgrade -r requirements.txt
-  ```
-
-  **Nota**: Siempre verifica la compatibilidad entre versiones antes de actualizar en producción.
-
-  ---
-
-  ## 🔮 Pruebas Automatizadas
-
-  Ejecuta las pruebas con:
-
-  ```bash
-  pytest
-  ```
-
-  ---
-
-  ## 🛠️ Si vas a usar Docker
-
-  Levanta el entorno con:
-
-  ```bash
-  docker-compose up --build
-  ```
-
-  Variables importantes se definen en el archivo `.env`. Puedes usar `.env-example` como referencia.
-
-  ---
-
-  ## 💡 Notas
-
-  - El proyecto está versionado bajo `v1/` y preparado para escalar a `v2/`, `v3/`, etc.
-
-  ---
-
-  ## ✨ Contribuciones
-
-  - Consulta el reglamento interno para hacer tus Pull Requests (Merge Request).
-
+| Documento | Descripción |
+|-----------|-------------|
+| [docs/architecture.md](docs/architecture.md) | Arquitectura del sistema, flujo de datos y componentes clave |
+| [docs/setup.md](docs/setup.md) | Configuración completa del entorno de desarrollo y producción |
+| [docs/auth-permissions.md](docs/auth-permissions.md) | Sistema JWT, RBAC, roles y permisos |
+| [docs/api-endpoints.md](docs/api-endpoints.md) | Referencia de todos los endpoints con ejemplos |
+| [docs/data-model.md](docs/data-model.md) | Modelo de datos, entidades y relaciones |
