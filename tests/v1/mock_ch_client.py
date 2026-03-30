@@ -46,8 +46,22 @@ class MockClickHouseClient:
         ):
             return self._handle_binary_profile(sql_clean)
 
+        if (
+            "count(distinct p.pd4_numero_documento_identificacion) as total_personas" in sql_clean
+            and "from rsh.vw_beneficios_x_persona as p" in sql_clean
+            and "inner join rsh.vw_beneficios_x_hogar as h on p.hogar_id = h.hogar_id" in sql_clean
+        ):
+            return self._handle_institutional_total_personas(sql_clean, params)
+
         # ── Consulta: handlers for beneficios_x_hogar (FODES) ──
         if "beneficios_x_hogar" in sql_clean:
+            if (
+                "count() as total_hogares" in sql_clean
+                and "sum(hombres) as total_hombres" in sql_clean
+                and "sum(mujeres) as total_mujeres" in sql_clean
+            ):
+                return self._handle_institutional_stats_general(sql_clean, params)
+
             # Dashboard global for consulta
             if "uniq(ig3_departamento_codigo)" in sql_clean:
                 return self._handle_consulta_dashboard(sql_clean, params)
@@ -202,7 +216,14 @@ class MockClickHouseClient:
 
     # ── Handlers ─────────────────────────────────────────────────────
 
-    _PROG_COLUMNS = ["prog_fodes", "prog_maga", "prog_mides"]
+    _PROG_COLUMNS = [
+        "prog_fodes",
+        "prog_maga",
+        "prog_mides",
+        "prog_bono_social",
+        "prog_bolsa_social",
+        "prog_bono_unico",
+    ]
     _ALL_INTERVENTIONS = [
         "estufa_mejorada", "ecofiltro", "letrina", "repello", "piso",
         "sembro", "crio_animal",
@@ -216,7 +237,7 @@ class MockClickHouseClient:
         # ── Base filter: prog_X = 1 (dinamico) ──
         for prog_col in self._PROG_COLUMNS:
             if f"{prog_col} = 1" in sql_clean or f"{prog_col}=1" in sql_clean:
-                filtered = [b for b in filtered if b.get(prog_col) == 1]
+                filtered = [b for b in filtered if self._get_prog_value(b, prog_col) == 1]
 
         # ── Filtros geograficos ──
         if "depto" in params:
@@ -235,6 +256,54 @@ class MockClickHouseClient:
                 filtered = [b for b in filtered if b.get(col) == 1]
 
         return filtered
+
+    def _get_prog_value(self, row: dict, prog_col: str) -> int:
+        if prog_col in row:
+            return row.get(prog_col) or 0
+        if prog_col in {"prog_bono_social", "prog_bolsa_social", "prog_bono_unico"}:
+            return row.get("prog_mides") or 0
+        return 0
+
+    def _handle_institutional_stats_general(self, sql_clean: str, params: dict) -> MockQueryResult:
+        filtered = self._apply_consulta_filters(self.dataset.beneficios_x_hogar, params, sql_clean)
+        total = len(filtered)
+        ipm_avg = sum(h["ipm_gt"] for h in filtered) / total if total else 0
+        total_personas = sum(h["numero_personas"] for h in filtered)
+        total_hombres = sum(h["hombres"] for h in filtered)
+        total_mujeres = sum(h["mujeres"] for h in filtered)
+
+        columns = [
+            "total_hogares",
+            "deptos",
+            "munis",
+            "lugares",
+            "ipm_avg",
+            "pmt_avg",
+            "nbi_avg",
+            "total_hombres",
+            "total_mujeres",
+        ]
+        row = (
+            total,
+            len({h["ig3_departamento_codigo"] for h in filtered}),
+            len({h["ig4_municipio_codigo"] for h in filtered}),
+            len({h["ig5_lugar_poblado"] for h in filtered}),
+            round(ipm_avg, 4),
+            0,
+            0,
+            total_hombres,
+            total_mujeres,
+        )
+
+        return MockQueryResult(column_names=columns, result_rows=[row])
+
+    def _handle_institutional_total_personas(self, sql_clean: str, params: dict) -> MockQueryResult:
+        filtered = self._apply_consulta_filters(self.dataset.beneficios_x_hogar, params, sql_clean)
+        total_personas = sum(h["numero_personas"] for h in filtered)
+        return MockQueryResult(
+            column_names=["total_personas"],
+            result_rows=[(total_personas,)],
+        )
 
     def _apply_filters(self, hogares: list[dict], params: dict, sql_clean: str = "") -> list[dict]:
         """Aplica filtros a la lista de hogares, incluyendo cross-table."""
@@ -749,9 +818,27 @@ class MockClickHouseClient:
         munis = set(h["municipio_codigo"] for h in hogares)
         ipm_avg = sum(h["ipm_gt"] for h in hogares) / total if total else 0
         total_personas = sum(h["numero_personas"] for h in hogares)
+        total_hombres = sum(h["hombres"] for h in hogares)
+        total_mujeres = sum(h["mujeres"] for h in hogares)
 
-        columns = ["total_hogares", "total_departamentos", "total_municipios", "ipm_promedio", "total_personas"]
-        row = (total, len(deptos), len(munis), round(ipm_avg, 4), total_personas)
+        columns = [
+            "total_hogares",
+            "total_departamentos",
+            "total_municipios",
+            "ipm_promedio",
+            "total_personas",
+            "total_hombres",
+            "total_mujeres",
+        ]
+        row = (
+            total,
+            len(deptos),
+            len(munis),
+            round(ipm_avg, 4),
+            total_personas,
+            total_hombres,
+            total_mujeres,
+        )
 
         return MockQueryResult(column_names=columns, result_rows=[row])
 

@@ -137,6 +137,9 @@ def _build_admin_dashboard(db: Session, client) -> AdminDashboardStats:
             PobrezaDepartamentoItem(**d) for d in rsh.get("nbi_por_departamento", [])
         ],
         # Sexo
+        total_personas_stats=rsh.get("total_personas", 0),
+        total_hombres=rsh.get("total_hombres", 0),
+        total_mujeres=rsh.get("total_mujeres", 0),
         personas_por_sexo=[
             SexoCount(sexo="Hombres", cantidad=rsh.get("total_hombres", 0)),
             SexoCount(sexo="Mujeres", cantidad=rsh.get("total_mujeres", 0)),
@@ -213,6 +216,9 @@ def _build_institutional_dashboard(user: User, db: Session, client, departamento
             PobrezaDepartamentoItem(**d) for d in rsh.get("nbi_por_departamento", [])
         ],
         # Sexo
+        total_personas_stats=rsh.get("total_personas", 0),
+        total_hombres=rsh.get("total_hombres", 0),
+        total_mujeres=rsh.get("total_mujeres", 0),
         personas_por_sexo=[
             SexoCount(sexo="Hombres", cantidad=rsh.get("total_hombres", 0)),
             SexoCount(sexo="Mujeres", cantidad=rsh.get("total_mujeres", 0)),

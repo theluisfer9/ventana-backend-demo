@@ -81,6 +81,9 @@ class AdminDashboardStats(BaseModel):
     nbi_por_departamento: list[PobrezaDepartamentoItem] = []
 
     # Sexo beneficiarios
+    total_personas_stats: int = 0
+    total_hombres: int = 0
+    total_mujeres: int = 0
     personas_por_sexo: list[SexoCount] = []
 
     # Geográfico
@@ -122,6 +125,9 @@ class InstitutionalDashboardStats(BaseModel):
     nbi_por_departamento: list[PobrezaDepartamentoItem] = []
 
     # Sexo beneficiarios
+    total_personas_stats: int = 0
+    total_hombres: int = 0
+    total_mujeres: int = 0
     personas_por_sexo: list[SexoCount] = []
 
     # Geográfico

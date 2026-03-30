@@ -3,7 +3,11 @@ from uuid import uuid4
 from api.v1.models.data_source import DataSource, RoleDataSource, SavedQuery
 from api.v1.models.institution import Institution
 from api.v1.models.user import User
-from api.v1.routes.dashboard_routes import _get_user_base_filters
+from api.v1.routes.dashboard_routes import (
+    _build_admin_dashboard,
+    _build_institutional_dashboard,
+    _get_user_base_filters,
+)
 from api.v1.services.dashboard.queries import query_institutional_pg_stats
 
 
@@ -131,3 +135,50 @@ def test_get_user_base_filters_returns_none_without_institutional_preset(
     db_session.commit()
 
     assert _get_user_base_filters(test_regular_user, db_session) is None
+
+
+def test_build_admin_dashboard_exposes_flat_demographic_totals(
+    db_session,
+    mock_ch,
+):
+    dashboard = _build_admin_dashboard(db_session, mock_ch)
+
+    assert dashboard.total_personas_stats == dashboard.total_personas
+    assert dashboard.total_hombres > 0
+    assert dashboard.total_mujeres > 0
+
+
+def test_build_institutional_dashboard_exposes_flat_demographic_totals(
+    db_session,
+    test_roles,
+    mock_ch,
+):
+    institution = Institution(
+        id=uuid4(),
+        code="MIDES",
+        name="Ministerio de Desarrollo Social",
+        description="Institution for MIDES dashboard",
+        is_active=True,
+    )
+    db_session.add(institution)
+    db_session.flush()
+
+    user = User(
+        id=uuid4(),
+        email="mides@test.com",
+        username="mides_user",
+        first_name="Mides",
+        last_name="User",
+        role_id=test_roles["analyst"].id,
+        institution_id=institution.id,
+        is_active=True,
+        is_verified=True,
+    )
+    db_session.add(user)
+    db_session.commit()
+
+    dashboard = _build_institutional_dashboard(user, db_session, mock_ch)
+
+    assert dashboard.total_personas_stats == dashboard.total_personas
+    assert dashboard.total_hombres > 0
+    assert dashboard.total_mujeres > 0
