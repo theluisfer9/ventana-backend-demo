@@ -34,6 +34,12 @@ def _normalize_export_value(value):
     return value
 
 
+def _sanitize_for_pdf(text) -> str:
+    """Remove characters not supported by Helvetica (latin-1 only)."""
+    s = str(text) if text is not None else ""
+    return s.encode("latin-1", errors="replace").decode("latin-1")
+
+
 def _find_geo_key(columns_meta: list[dict], keywords: tuple[str, ...]) -> str | None:
     """Encuentra la key de una columna geo en columns_meta.
 
@@ -221,7 +227,7 @@ def generate_excel_zip(rows: list[dict], columns_meta: list[dict], title: str = 
     return zip_buf
 
 
-_CHUNK_SIZE = 10_000
+_CHUNK_SIZE = 5_000
 
 
 def generate_excel_chunked_zip(rows: list[dict], columns_meta: list[dict], title: str = "Consulta") -> BytesIO:
@@ -256,7 +262,7 @@ def generate_excel_chunked_zip(rows: list[dict], columns_meta: list[dict], title
 def generate_pdf_chunked_zip(rows: list[dict], columns_meta: list[dict], title: str = "Consulta") -> BytesIO:
     """Genera ZIP con PDFs de max 10K filas cada uno, sin agrupar por geo.
 
-    Usa formato listado detallado (no tabla).
+    Usa formato listado estilo beneficiarios.
     """
     headers = [c["label"] for c in columns_meta]
     keys = [c["column_name"] for c in columns_meta]
@@ -274,10 +280,8 @@ def generate_pdf_chunked_zip(rows: list[dict], columns_meta: list[dict], title: 
             pdf.set_auto_page_break(auto=True, margin=20)
             pdf.add_page()
 
-            _write_pdf_listing_rows(
-                pdf, headers, keys, chunk_rows,
-                total_label="Total de registros",
-            )
+            _write_pdf_simple_header(pdf, chunk_title)
+            _write_pdf_listing_rows(pdf, headers, keys, chunk_rows)
 
             pdf_buf = BytesIO()
             pdf.output(pdf_buf)
@@ -379,21 +383,67 @@ def _write_pdf_rows(pdf: FPDF, keys: list[str], col_widths: list[float], rows: l
         pdf.ln()
 
 
-# ── PDF formato listado (estilo detallado) ──────────────────────────
-
-_LISTING_FIELDS_PER_LINE = 3  # campos por linea en el listado
+# ── PDF formato listado (estilo beneficiarios) ──────────────────────
 
 
-def _write_pdf_listing_header(pdf: FPDF, title: str, subtitle: str | None = None):
-    """Escribe header de seccion en formato listado."""
-    pdf.set_font("Helvetica", "B", 12)
+def _write_pdf_section_header(
+    pdf: FPDF,
+    depto_name: str,
+    muni_name: str,
+    title: str = "Consulta",
+):
+    """Escribe header de seccion estilo beneficiarios con depto/muni."""
+    # Linea superior: TITULO - MUNICIPIO DE X - DEPARTAMENTO DE Y
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(0, 0, 0)
+    top_line = _sanitize_for_pdf(f"{title.upper()} - MUNICIPIO DE {muni_name.upper()} - DEPARTAMENTO DE {depto_name.upper()}")
+    pdf.cell(0, 5, top_line, new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(1)
+
+    # Titulo azul bold subrayado
+    pdf.set_font("Helvetica", "BU", 11)
     pdf.set_text_color(31, 78, 121)
-    pdf.multi_cell(0, 7, title, new_x="LMARGIN", new_y="NEXT")
-    if subtitle:
-        pdf.set_font("Helvetica", "B", 10)
-        pdf.set_text_color(31, 78, 121)
-        pdf.multi_cell(0, 6, subtitle, new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(2)
+    detail_line = _sanitize_for_pdf(
+        f"LISTADO DE REGISTROS IDENTIFICADOS EN EL "
+        f"MUNICIPIO DE {muni_name.upper()} DEL DEPARTAMENTO DE {depto_name.upper()}"
+    )
+    pdf.multi_cell(0, 6, detail_line, new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(1)
+
+
+def _write_pdf_simple_header(pdf: FPDF, title: str):
+    """Escribe header simple cuando no hay agrupacion geografica."""
+    pdf.set_font("Helvetica", "BU", 11)
+    pdf.set_text_color(31, 78, 121)
+    pdf.multi_cell(0, 6, _sanitize_for_pdf(title.upper()), new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(1)
+
+
+def _parse_familia(familia_str: str) -> list[dict]:
+    """Parsea el campo familia: 'Nombre, Parentesco, CUI | ...' -> [{nombre, parentesco, cui}]."""
+    if not familia_str:
+        return []
+    members = []
+    for entry in familia_str.split(" | "):
+        entry = entry.strip()
+        if not entry:
+            continue
+        parts = entry.rsplit(", ", 2)
+        if len(parts) == 3:
+            members.append({"nombre": parts[0].strip(), "parentesco": parts[1].strip(), "cui": parts[2].strip()})
+        elif len(parts) == 2:
+            members.append({"nombre": parts[0].strip(), "parentesco": parts[1].strip(), "cui": ""})
+        else:
+            members.append({"nombre": entry, "parentesco": "", "cui": ""})
+    return members
+
+
+def _format_cui(cui) -> str:
+    """Formatea CUI/DPI para mostrar."""
+    cui_str = str(_normalize_export_value(cui) if cui else "")
+    if not cui_str or cui_str in ("-1", "0", ""):
+        return "SIN CUI REGISTRADO"
+    return cui_str
 
 
 def _write_pdf_listing_rows(
@@ -401,62 +451,112 @@ def _write_pdf_listing_rows(
     headers: list[str],
     keys: list[str],
     rows: list[dict],
-    total_label: str | None = None,
 ):
-    """Renderiza filas en formato listado detallado (no tabla).
+    """Renderiza filas estilo beneficiarios con familia desglosada.
 
-    Cada fila se muestra como un bloque numerado:
-      1. campo1: VALOR | campo2: VALOR | campo3: VALOR
-         campo4: VALOR | campo5: VALOR
+    Si el row tiene campo 'familia', renderiza:
+      TOTAL DE HOGARES IDENTIFICADOS: N
+      1. NOMBRE JEFE, jefa o jefe del hogar DPI: xxx
+         * MIEMBRO, parentesco DPI: xxx
+         * MIEMBRO, parentesco DPI: xxx
+
+    Si no tiene 'familia', renderiza formato listado con campos.
     """
-    if total_label:
-        pdf.set_font("Helvetica", "B", 9)
-        pdf.set_text_color(0, 0, 0)
-        pdf.cell(0, 6, f"{total_label}: {len(rows)}", new_x="LMARGIN", new_y="NEXT")
-        pdf.ln(1)
+    has_familia = any("familia" in row for row in rows[:5])
+
+    # Campos a excluir del detalle (ya se muestran en el formato familia)
+    familia_skip = {
+        "familia", "nombre_jefe_hogar", "cui_jefe_hogar", "sexo_jefe_hogar",
+        "celular_jefe_hogar", "nombre_madre", "cui_madre", "sexo_madre",
+        "celular_madre", "nombre_otro_integrante", "cui_otro_integrante",
+        "celular_otro_integrante", "parentesco_otro_integrante",
+    }
+
+    # Total
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_text_color(0, 0, 0)
+    label = "TOTAL DE HOGARES IDENTIFICADOS" if has_familia else "TOTAL DE REGISTROS IDENTIFICADOS"
+    pdf.cell(0, 6, f"{label}: {len(rows)}", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(1)
 
     for idx, row in enumerate(rows, start=1):
-        # Linea de separacion sutil entre registros
-        if idx > 1:
-            pdf.set_draw_color(200, 200, 200)
-            pdf.line(pdf.l_margin, pdf.get_y(), pdf.l_margin + pdf.epw, pdf.get_y())
-            pdf.ln(1)
+        if pdf.get_y() > pdf.h - 30:
+            pdf.add_page()
 
-        # Numero del registro en bold
-        pdf.set_font("Helvetica", "B", 9)
-        pdf.set_text_color(31, 78, 121)
-        pdf.cell(8, 5, f"{idx}.", new_x="END")
+        if has_familia:
+            # ── Formato familia ──
+            familia_str = str(_normalize_export_value(row.get("familia", "") or ""))
+            members = _parse_familia(familia_str)
+            jefe = members[0] if members else None
+            integrantes = members[1:] if len(members) > 1 else []
 
-        # Primera linea de campos (bold, junto al numero)
-        first_line_fields = min(_LISTING_FIELDS_PER_LINE, len(keys))
-        parts = []
-        for i in range(first_line_fields):
-            val = str(_normalize_export_value(row.get(keys[i], "") or ""))
-            parts.append(f"{headers[i]}: {val}")
-        pdf.set_font("Helvetica", "B", 8)
-        pdf.set_text_color(0, 0, 0)
-        pdf.multi_cell(0, 5, "  |  ".join(parts), new_x="LMARGIN", new_y="NEXT")
+            # Jefe del hogar bold
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.set_text_color(0, 0, 0)
+            if jefe:
+                jefe_line = f"{idx}. {jefe['nombre'].upper()}, {jefe['parentesco']} DPI: {_format_cui(jefe['cui'])}"
+            else:
+                nombre = str(_normalize_export_value(row.get("nombre_jefe_hogar", "") or "")).upper()
+                cui = _format_cui(row.get("cui_jefe_hogar"))
+                jefe_line = f"{idx}. {nombre}, jefa o jefe del hogar DPI: {cui}"
+            pdf.multi_cell(0, 5, _sanitize_for_pdf(jefe_line), new_x="LMARGIN", new_y="NEXT")
 
-        # Resto de campos en lineas normales (con indentacion)
-        remaining = list(zip(headers[first_line_fields:], keys[first_line_fields:]))
-        for line_start in range(0, len(remaining), _LISTING_FIELDS_PER_LINE):
-            chunk = remaining[line_start:line_start + _LISTING_FIELDS_PER_LINE]
-            parts = []
-            for label, key in chunk:
-                val = str(_normalize_export_value(row.get(key, "") or ""))
-                parts.append(f"{label}: {val}")
-            pdf.set_font("Helvetica", "", 8)
-            pdf.set_text_color(55, 55, 55)
-            pdf.cell(8, 5, "", new_x="END")  # indentacion
-            pdf.multi_cell(0, 5, "  |  ".join(parts), new_x="LMARGIN", new_y="NEXT")
+            # Integrantes como bullets
+            for member in integrantes:
+                pdf.set_font("Helvetica", "", 8)
+                pdf.set_text_color(0, 0, 0)
+                member_line = f"    *  {member['nombre'].upper()}, {member['parentesco']} DPI: {_format_cui(member['cui'])}"
+                pdf.multi_cell(0, 5, _sanitize_for_pdf(member_line), new_x="LMARGIN", new_y="NEXT")
+
+            # Campos adicionales seleccionados (excluyendo los de familia/geo)
+            extra_fields = [(h, k) for h, k in zip(headers, keys) if k not in familia_skip]
+            if extra_fields:
+                parts = []
+                for label_h, key in extra_fields:
+                    val = str(_normalize_export_value(row.get(key, "") or ""))
+                    if val:
+                        parts.append(f"{label_h}: {val}")
+                if parts:
+                    pdf.set_font("Helvetica", "", 7)
+                    pdf.set_text_color(80, 80, 80)
+                    pdf.cell(8, 4, "", new_x="END")
+                    pdf.multi_cell(0, 4, _sanitize_for_pdf("  |  ".join(parts)), new_x="LMARGIN", new_y="NEXT")
+
+        else:
+            # ── Formato listado generico ──
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.set_text_color(0, 0, 0)
+
+            first_val = _sanitize_for_pdf(str(_normalize_export_value(row.get(keys[0], "") or "")).upper())
+            first_part = f"{idx}. {headers[0]}: {first_val}"
+            if len(keys) > 1:
+                second_val = _sanitize_for_pdf(str(_normalize_export_value(row.get(keys[1], "") or "")))
+                first_part += f"  {headers[1]}: {second_val}"
+            pdf.multi_cell(0, 5, first_part, new_x="LMARGIN", new_y="NEXT")
+
+            remaining = list(zip(headers[2:], keys[2:]))
+            for i in range(0, len(remaining), 2):
+                chunk = remaining[i:i + 2]
+                parts = []
+                for label_h, key in chunk:
+                    val = _sanitize_for_pdf(str(_normalize_export_value(row.get(key, "") or "")))
+                    parts.append(f"{label_h}: {val}")
+                pdf.set_font("Helvetica", "", 8)
+                pdf.set_text_color(0, 0, 0)
+                pdf.cell(8, 5, "", new_x="END")
+                pdf.multi_cell(0, 5, "  |  ".join(parts), new_x="LMARGIN", new_y="NEXT")
 
         pdf.ln(1)
+
+
+_PDF_ROWS_PER_DEPTO = 5_000
 
 
 def generate_pdf_zip(rows: list[dict], columns_meta: list[dict], title: str = "Consulta") -> BytesIO:
     """Genera ZIP con un .pdf por departamento, secciones por municipio.
 
-    Usa formato listado detallado (no tabla).
+    Usa formato listado estilo beneficiarios.
+    Limita a _PDF_ROWS_PER_DEPTO filas por departamento.
     """
     depto_key = _find_geo_key(columns_meta, _GEO_DEPTO_KEYWORDS)
     muni_key = _find_geo_key(columns_meta, _GEO_MUNI_KEYWORDS)
@@ -475,19 +575,18 @@ def generate_pdf_zip(rows: list[dict], columns_meta: list[dict], title: str = "C
             pdf.alias_nb_pages()
             pdf.set_auto_page_break(auto=True, margin=20)
 
+            depto_row_count = 0
             for muni_name in sorted(municipios.keys()):
+                if depto_row_count >= _PDF_ROWS_PER_DEPTO:
+                    break
                 muni_rows = municipios[muni_name]
-                pdf.add_page()
+                remaining = _PDF_ROWS_PER_DEPTO - depto_row_count
+                muni_rows = muni_rows[:remaining]
+                depto_row_count += len(muni_rows)
 
-                _write_pdf_listing_header(
-                    pdf,
-                    title=f"{title} - {depto_name}",
-                    subtitle=f"Municipio: {muni_name}",
-                )
-                _write_pdf_listing_rows(
-                    pdf, headers, keys, muni_rows,
-                    total_label="Total de registros",
-                )
+                pdf.add_page()
+                _write_pdf_section_header(pdf, depto_name, muni_name, title)
+                _write_pdf_listing_rows(pdf, headers, keys, muni_rows)
 
             pdf_buf = BytesIO()
             pdf.output(pdf_buf)

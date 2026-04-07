@@ -9,6 +9,7 @@ from api.v1.models.user_session import UserSession
 from api.v1.models.user_query_checkpoint import UserQueryCheckpoint
 from api.v1.models.ticket import Ticket, TicketStatus
 from api.v1.models.data_source import DataSource, DataSourceColumn, SavedQuery, ColumnDataType, ColumnCategory
+from api.v1.models.export_job import ExportJob, ExportJobStatus
 
 __all__ = [
     "Institution",
@@ -29,4 +30,6 @@ __all__ = [
     "SavedQuery",
     "ColumnDataType",
     "ColumnCategory",
+    "ExportJob",
+    "ExportJobStatus",
 ]

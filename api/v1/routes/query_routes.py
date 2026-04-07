@@ -100,11 +100,14 @@ def _get_user_datasource(ds_id: UUID, user: User, db: Session) -> DataSource:
     if not ds:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="DataSource no encontrado")
     if not _is_admin(user):
-        has_access = db.query(RoleDataSource).filter(
+        has_role_access = db.query(RoleDataSource).filter(
             RoleDataSource.role_id == user.role_id,
             RoleDataSource.datasource_id == ds.id,
         ).first()
-        if not has_access:
+        has_institution_access = (
+            user.institution_id and ds.institution_id and ds.institution_id == user.institution_id
+        )
+        if not has_role_access and not has_institution_access:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tiene acceso a este DataSource")
     return ds
 
@@ -146,6 +149,17 @@ def _load_roles_by_ids(db: Session, role_ids: list[UUID]) -> list[Role]:
     return roles
 
 
+def _ensure_roles_have_datasource_access(db: Session, datasource_id, roles: list[Role]) -> None:
+    """Ensure each role has access to the datasource used by the saved query."""
+    for role in roles:
+        exists = db.query(RoleDataSource).filter(
+            RoleDataSource.role_id == role.id,
+            RoleDataSource.datasource_id == datasource_id,
+        ).first()
+        if not exists:
+            db.add(RoleDataSource(role_id=role.id, datasource_id=datasource_id))
+
+
 def _sync_saved_query_roles(db: Session, sq: SavedQuery, roles: list[Role]) -> None:
     target_role_ids = {role.id for role in roles}
     current_role_ids = _get_saved_query_role_ids(sq)
@@ -154,6 +168,7 @@ def _sync_saved_query_roles(db: Session, sq: SavedQuery, roles: list[Role]) -> N
         return
 
     sq.roles = roles
+    _ensure_roles_have_datasource_access(db, sq.datasource_id, roles)
 
 
 def _can_access_saved_query(sq: SavedQuery, user: User) -> bool:
@@ -173,11 +188,16 @@ def list_available_datasources(
     db: Session = Depends(get_sync_db_pg),
 ):
     query = db.query(DataSource).options(joinedload(DataSource.columns_def)).filter(DataSource.is_active == True)
-    if not _is_admin(current_user):
-        accessible_ids = db.query(RoleDataSource.datasource_id).filter(
+    user_permissions = {p.code for p in current_user.role.permissions} if current_user.role else set()
+    sees_all = _is_admin(current_user) or "reports:advanced" in user_permissions
+    if not sees_all:
+        role_ds_ids = db.query(RoleDataSource.datasource_id).filter(
             RoleDataSource.role_id == current_user.role_id,
         ).subquery()
-        query = query.filter(DataSource.id.in_(select(accessible_ids.c.datasource_id)))
+        conditions = [DataSource.id.in_(select(role_ds_ids.c.datasource_id))]
+        if current_user.institution_id:
+            conditions.append(DataSource.institution_id == current_user.institution_id)
+        query = query.filter(or_(*conditions))
     sources = query.order_by(DataSource.name).all()
     return [
         {
@@ -299,6 +319,11 @@ def _execute_export(body: QueryExecuteRequest, user: User, db: Session, client, 
     """Logica comun para exportar una consulta ad-hoc."""
     ds = _get_user_datasource(body.datasource_id, user, db)
     body.columns = _ensure_geo_columns(body.columns, ds.columns_def)
+    # Para PDF, incluir 'familia' si existe en el datasource
+    if formato == "pdf":
+        col_names = {c.column_name for c in ds.columns_def}
+        if "familia" in col_names and "familia" not in body.columns:
+            body.columns.append("familia")
     validated_cols = validate_columns(body.columns, ds.columns_def)
     filters_dicts = [f.model_dump() for f in body.filters]
     validate_filters(filters_dicts, ds.columns_def)
@@ -589,6 +614,7 @@ def save_query(
         agrupar=body.agrupar,
     )
     sq.roles = roles
+    _ensure_roles_have_datasource_access(db, ds.id, roles)
     db.add(sq)
     db.commit()
     db.refresh(sq)

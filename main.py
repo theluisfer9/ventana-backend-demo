@@ -29,6 +29,7 @@ from api.v1.routes import datasource_routes
 from api.v1.routes import query_routes
 from api.v1.routes import dashboard_routes
 from api.v1.routes import system_catalog_routes
+from api.v1.routes import export_routes
 
 # Import models to register them with SQLAlchemy
 from api.v1.models import (
@@ -46,6 +47,7 @@ from api.v1.models import (
     DataSourceColumn,
     SavedQuery,
     InstitutionApiToken,
+    ExportJob,
 )
 
 def _create_tables() -> None:
@@ -107,6 +109,7 @@ app.include_router(datasource_routes.router, prefix="/api/v1")
 app.include_router(query_routes.router, prefix="/api/v1")
 app.include_router(dashboard_routes.router, prefix="/api/v1")
 app.include_router(system_catalog_routes.router, prefix="/api/v1")
+app.include_router(export_routes.router, prefix="/api/v1")
 
 # Legacy/Example routes
 app.include_router(ticket_routes.router, prefix="/api/v1")

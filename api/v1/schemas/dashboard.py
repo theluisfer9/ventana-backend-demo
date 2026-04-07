@@ -47,12 +47,23 @@ class InstitutionBeneficiariosCount(BaseModel):
 
 # ── Super Admin Dashboard ────────────────────────────────────────────
 
+class QueryActivityItem(BaseModel):
+    consulta: str
+    datasource: str
+    ejecuciones: int
+    exportaciones: int = 0
+
+
 class AdminDashboardStats(BaseModel):
     """Dashboard completo para Super Admin."""
     # Sistema
     total_instituciones: int = 0
     total_usuarios: int = 0
     total_consultas_guardadas: int = 0
+    total_consultas_ejecutadas: int = 0
+    total_exportaciones: int = 0
+    total_datasources: int = 0
+    actividad_consultas: list[QueryActivityItem] = []
     usuarios_por_institucion: list[InstitutionUsersCount] = []
     beneficiarios_por_institucion: list[InstitutionBeneficiariosCount] = []
 

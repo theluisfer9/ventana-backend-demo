@@ -33,6 +33,13 @@ def _is_admin(user: User) -> bool:
     return PermissionCode.SYSTEM_CONFIG.value in user_permissions
 
 
+def _has_global_dashboard(user: User) -> bool:
+    """ADMIN y ANALYST ven dashboard global sin filtros."""
+    if not user.role:
+        return False
+    return user.role.code in ("ADMIN", "ANALYST")
+
+
 def _get_user_base_filters(user: User, db: Session) -> tuple[list[str], str, list[str]] | None:
     """Get dashboard scoping for the current institutional user."""
     from api.v1.config.institutional_presets import INSTITUTIONAL_PRESETS
@@ -63,7 +70,7 @@ def get_dashboard(
     - Super Admin: datos globales del sistema + RSH completo
     - Admin/Usuario Institucional: datos scoped a su institucion
     """
-    if _is_admin(current_user):
+    if _has_global_dashboard(current_user):
         return _build_admin_dashboard(db, client).model_dump()
     else:
         return _build_institutional_dashboard(current_user, db, client, departamento_codigo=departamento).model_dump()
@@ -92,11 +99,18 @@ def _build_admin_dashboard(db: Session, client) -> AdminDashboardStats:
         ]
     ]
 
+    from api.v1.schemas.dashboard import QueryActivityItem
     return AdminDashboardStats(
         # Sistema
         total_instituciones=sys_stats["total_instituciones"],
         total_usuarios=sys_stats["total_usuarios"],
         total_consultas_guardadas=sys_stats["total_consultas_guardadas"],
+        total_consultas_ejecutadas=sys_stats.get("total_consultas_ejecutadas", 0),
+        total_exportaciones=sys_stats.get("total_exportaciones", 0),
+        total_datasources=sys_stats.get("total_datasources", 0),
+        actividad_consultas=[
+            QueryActivityItem(**a) for a in sys_stats.get("actividad_consultas", [])
+        ],
         usuarios_por_institucion=[
             InstitutionUsersCount(**u) for u in sys_stats["usuarios_por_institucion"]
         ],

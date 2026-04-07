@@ -31,6 +31,7 @@ class DataSource(BasePG):
     ch_table = Column(String(200), nullable=False)
     base_filter_columns = Column(JSONB, nullable=False, default=list, server_default="[]")
     base_filter_logic = Column(String(3), nullable=False, default="OR", server_default="OR")
+    institution_id = Column(UUID(as_uuid=True), ForeignKey("institutions.id", ondelete="SET NULL"), nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

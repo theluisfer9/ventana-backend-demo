@@ -4,6 +4,7 @@ from sqlalchemy import func as sa_func
 from api.v1.models.user import User
 from api.v1.models.institution import Institution
 from api.v1.models.data_source import DataSource, RoleDataSource, SavedQuery
+from api.v1.models.audit_event import AuditEvent
 
 
 # ── PostgreSQL queries ───────────────────────────────────────────────
@@ -57,11 +58,59 @@ def query_system_stats(db: Session) -> dict:
             "consultas": consultas,
         })
 
+    # Consultas ejecutadas y exportaciones desde audit_events
+    total_ejecutadas = db.query(sa_func.count(AuditEvent.id)).filter(
+        AuditEvent.module == "query_builder",
+        AuditEvent.event_type == "query",
+    ).scalar() or 0
+
+    total_exportaciones = db.query(sa_func.count(AuditEvent.id)).filter(
+        AuditEvent.module == "query_builder",
+        AuditEvent.event_type == "export",
+    ).scalar() or 0
+
+    total_datasources = db.query(sa_func.count(DataSource.id)).filter(
+        DataSource.is_active == True,
+    ).scalar() or 0
+
+    # Tabla de actividad por consulta guardada
+    from sqlalchemy import text
+    actividad_rows = db.execute(text("""
+        SELECT
+            sq.name as consulta,
+            ds.name as datasource,
+            count(*) FILTER (WHERE ae.event_type = 'query') as ejecuciones,
+            count(*) FILTER (WHERE ae.event_type = 'export') as exportaciones,
+            count(*) as total_acciones,
+            max(ae.created_at) as ultima_actividad
+        FROM saved_queries sq
+        JOIN data_sources ds ON ds.id = sq.datasource_id
+        LEFT JOIN audit_events ae ON ae.module = 'query_builder'
+            AND ae.resource_id = sq.datasource_id::text
+        GROUP BY sq.id, sq.name, ds.name
+        ORDER BY total_acciones DESC
+        LIMIT 50
+    """)).fetchall()
+
+    actividad_consultas = [
+        {
+            "consulta": row[0] or "N/A",
+            "datasource": row[1] or "N/A",
+            "ejecuciones": row[2] or 0,
+            "exportaciones": row[3] or 0,
+        }
+        for row in actividad_rows
+    ]
+
     return {
         "total_instituciones": total_inst,
         "total_usuarios": total_users,
         "total_consultas_guardadas": total_queries,
+        "total_consultas_ejecutadas": total_ejecutadas,
+        "total_exportaciones": total_exportaciones,
+        "total_datasources": total_datasources,
         "usuarios_por_institucion": usuarios_por_inst,
+        "actividad_consultas": actividad_consultas,
     }
 
 

@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import joinedload
@@ -51,6 +53,7 @@ def _build_resource_labels(db: Session, events: list[AuditEvent]) -> dict[tuple[
 def list_audit_events(
     module: str | None = Query(None),
     event_type: str | None = Query(None),
+    user_id: UUID | None = Query(None),
     limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_sync_db_pg),
     current_user: User = Depends(RequirePermission(PermissionCode.SYSTEM_AUDIT)),
@@ -63,6 +66,8 @@ def list_audit_events(
         query = query.filter(AuditEvent.module == module)
     if event_type:
         query = query.filter(AuditEvent.event_type == event_type)
+    if user_id:
+        query = query.filter(AuditEvent.user_id == user_id)
     events = query.order_by(AuditEvent.created_at.desc()).limit(limit).all()
     resource_labels = _build_resource_labels(db, events)
 
