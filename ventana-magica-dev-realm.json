@@ -1,7 +1,7 @@
 {
   "realm": "ventana-magica-dev",
   "enabled": true,
-  "displayName": "Ventana Magica Dev",
+  "displayName": "Ventana de Extracción Dev",
   "registrationAllowed": false,
   "loginWithEmailAllowed": true,
   "duplicateEmailsAllowed": false,
@@ -26,7 +26,7 @@
   "clients": [
     {
       "clientId": "sicoweb-frontend",
-      "name": "Ventana Magica Frontend",
+      "name": "Ventana de Extracción Frontend",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": true,
