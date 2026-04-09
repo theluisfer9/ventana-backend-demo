@@ -10,6 +10,7 @@ from api.v1.models.user_session import UserSession
 from api.v1.auth.jwt_handler import verify_token
 from api.v1.services.keycloak_auth import (
     extract_keycloak_identity,
+    is_keycloak_enabled,
     verify_keycloak_token,
 )
 from api.v1.services.auth_identity import resolve_user_from_keycloak_identity
@@ -38,15 +39,44 @@ def get_token_from_header(
     return credentials.credentials
 
 
+def _get_user_from_keycloak_token(db: Session, token: str) -> User | None:
+    if not is_keycloak_enabled():
+        return None
+
+    payload = verify_keycloak_token(token)
+    if payload is None:
+        return None
+
+    identity = extract_keycloak_identity(payload)
+    if identity is None:
+        return None
+
+    return resolve_user_from_keycloak_identity(db, identity)
+
+
+def _get_user_from_local_jwt(db: Session, token: str) -> User | None:
+    payload = verify_token(token, token_type="access")
+    if payload is None:
+        return None
+
+    user_id = payload.get("sub")
+    if user_id is None:
+        return None
+
+    if _resolve_active_session(db, payload) is None:
+        return None
+
+    return db.get(User, user_id)
+
+
 def get_current_user(
     token: str = Depends(get_token_from_header),
     db: Session = Depends(get_sync_db_pg),
 ) -> User:
     """
-    Get the current authenticated user from JWT token.
+    Get the current authenticated user from Bearer token.
 
-    Raises:
-        HTTPException: If token is invalid or user not found
+    Supports Keycloak tokens first, then falls back to local JWT sessions.
     """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -54,29 +84,12 @@ def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    payload = verify_token(token, token_type="access")
-    user = None
-
-    if payload is not None:
-        user_id = payload.get("sub")
-        if user_id is not None and _resolve_active_session(db, payload) is not None:
-            user = db.get(User, user_id)
+    user = _get_user_from_keycloak_token(db, token)
+    if user is None:
+        user = _get_user_from_local_jwt(db, token)
 
     if user is None:
-        kc_payload = verify_keycloak_token(token)
-        if kc_payload is None:
-            raise credentials_exception
-
-        identity = extract_keycloak_identity(kc_payload)
-        if identity is None:
-            raise credentials_exception
-
-        user = resolve_user_from_keycloak_identity(db, identity)
-        if user is None:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Usuario autenticado en SSO pero no autorizado en la plataforma",
-            )
+        raise credentials_exception
 
     if not user.is_active:
         raise HTTPException(
@@ -114,21 +127,10 @@ def get_optional_current_user(
         return None
 
     token = auth_header.replace("Bearer ", "")
-    payload = verify_token(token, token_type="access")
-    user = None
-    if payload is not None:
-        user_id = payload.get("sub")
-        if user_id is not None and _resolve_active_session(db, payload) is not None:
-            user = db.get(User, user_id)
 
+    user = _get_user_from_keycloak_token(db, token)
     if user is None:
-        kc_payload = verify_keycloak_token(token)
-        if kc_payload is None:
-            return None
-        identity = extract_keycloak_identity(kc_payload)
-        if identity is None:
-            return None
-        user = resolve_user_from_keycloak_identity(db, identity)
+        user = _get_user_from_local_jwt(db, token)
 
     if user is None or not user.is_active:
         return None
