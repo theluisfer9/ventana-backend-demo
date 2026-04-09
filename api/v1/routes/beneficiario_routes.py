@@ -52,6 +52,7 @@ from api.v1.services.beneficiario.export import (
     generate_excel,
     generate_excel_grouped_zip,
     generate_pdf,
+    generate_pdf_grouped_zip,
 )
 from api.v1.services.user_checkpoint import (
     get_user_query_checkpoint,
@@ -359,11 +360,11 @@ def export_pdf(
     current_user=Depends(RequirePermission(PermissionCode.BENEFICIARIES_EXPORT)),
     client=Depends(get_ch_client),
 ):
-    """Exportar beneficiarios filtrados a PDF."""
+    """Exportar beneficiarios filtrados a PDF (ZIP con un PDF por municipio)."""
     filter_kwargs = filters.model_dump(exclude_none=True)
     rows = query_listado_municipio_comunidad(client, limit=PDF_EXPORT_LIMIT, **filter_kwargs)
     items = [row_to_beneficiario_resumen(r) | {"comunidad": r.get("comunidad", "")} for r in rows]
-    buf = generate_pdf(items)
+    buf = generate_pdf_grouped_zip(items)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_audit_event(
         db,
@@ -378,8 +379,60 @@ def export_pdf(
     )
     return StreamingResponse(
         buf,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="beneficiarios_{ts}.pdf"'},
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="beneficiarios_{ts}.zip"'},
+    )
+
+
+@router.get("/export/pdf-generico")
+def export_pdf_generico(
+    request: Request,
+    filters: BeneficiarioFilters = Depends(beneficiario_filters_dep),
+    db=Depends(get_sync_db_pg),
+    current_user=Depends(RequirePermission(PermissionCode.BENEFICIARIES_EXPORT)),
+    client=Depends(get_ch_client),
+):
+    """Exportar beneficiarios filtrados a PDF con formato generico del query builder.
+
+    Devuelve un ZIP con un PDF por departamento, formato listado (jefe bold + bullets
+    de integrantes), con todos los campos del hogar.
+    """
+    from api.v1.services.query_engine.export import generate_pdf_zip as gen_query_pdf_zip
+
+    filter_kwargs = filters.model_dump(exclude_none=True)
+    rows, _ = query_beneficiarios_lista(client, offset=0, limit=PDF_EXPORT_LIMIT, **filter_kwargs)
+    rows = [dict(r) for r in rows]
+
+    # columns_meta para el renderer generico (usa labels basados en las keys)
+    if rows:
+        columns_meta = [
+            {
+                "column_name": key,
+                "label": key.replace("_", " ").title(),
+                "data_type": "TEXT",
+            }
+            for key in rows[0].keys()
+        ]
+    else:
+        columns_meta = []
+
+    buf = gen_query_pdf_zip(rows, columns_meta, title="Consulta")
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_audit_event(
+        db,
+        event_type="export",
+        module="beneficiarios",
+        action="export_pdf_generico",
+        user=current_user,
+        request=request,
+        resource_type="beneficiarios",
+        payload_summary={"format": "pdf_generico", "filters": filter_kwargs},
+        result_count=len(rows),
+    )
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="beneficiarios_generico_{ts}.zip"'},
     )
 
 

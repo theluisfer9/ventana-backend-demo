@@ -253,6 +253,47 @@ class _BeneficiarioPDF(FPDF):
         self.cell(0, 10, f"Pagina {self.page_no()}/{{nb}}", align="C")
 
 
+def _write_municipio_pdf(pdf: FPDF, departamento: str, municipio: str, comunidades: dict[str, list[dict]]):
+    """Escribe el contenido de un municipio (header + comunidades) en el PDF."""
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.set_text_color(31, 78, 121)
+    pdf.cell(0, 8, f"Departamento: {departamento}", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(1)
+
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_text_color(55, 55, 55)
+    pdf.cell(0, 7, f"Municipio: {municipio}", new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(1)
+
+    for comunidad, beneficiarios in sorted(comunidades.items()):
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_text_color(0, 0, 0)
+        pdf.cell(
+            0,
+            6,
+            f"Comunidad: {comunidad} ({len(beneficiarios)} beneficiarios)",
+            new_x="LMARGIN",
+            new_y="NEXT",
+        )
+
+        pdf.set_font("Helvetica", "", 8)
+        for idx, beneficiario in enumerate(beneficiarios, start=1):
+            nombre = (beneficiario.get("nombre_completo") or "").strip() or "Sin nombre"
+            hogar_id = beneficiario.get("hogar_id", "")
+            cui = beneficiario.get("cui_jefe_hogar", "")
+            personas = beneficiario.get("numero_personas", 0)
+            area = (beneficiario.get("area") or "").strip()
+            ipm = round(beneficiario.get("ipm_gt", 0) or 0, 4)
+
+            line = (
+                f"{idx}. Hogar {hogar_id} | CUI {cui} | {nombre} | "
+                f"Personas: {personas} | Area: {area} | IPM: {ipm}"
+            )
+            pdf.multi_cell(pdf.epw, 5, line, new_x="LMARGIN", new_y="NEXT")
+
+        pdf.ln(2)
+
+
 def generate_pdf(rows: list[dict]) -> BytesIO:
     """Genera un archivo PDF portrait agrupado por municipio y comunidad."""
     pdf = _BeneficiarioPDF(orientation="P", unit="mm", format="A4")
@@ -265,46 +306,43 @@ def generate_pdf(rows: list[dict]) -> BytesIO:
     for depto_index, (departamento, municipios) in enumerate(sorted(grouped.items())):
         if depto_index > 0:
             pdf.add_page()
-
-        pdf.set_font("Helvetica", "B", 12)
-        pdf.set_text_color(31, 78, 121)
-        pdf.cell(0, 8, f"Departamento: {departamento}", new_x="LMARGIN", new_y="NEXT")
-        pdf.ln(1)
-
-        for municipio, comunidades in sorted(municipios.items()):
-            pdf.set_font("Helvetica", "B", 10)
-            pdf.set_text_color(55, 55, 55)
-            pdf.cell(0, 7, f"Municipio: {municipio}", new_x="LMARGIN", new_y="NEXT")
-
-            for comunidad, beneficiarios in sorted(comunidades.items()):
-                pdf.set_font("Helvetica", "B", 9)
-                pdf.set_text_color(0, 0, 0)
-                pdf.cell(
-                    0,
-                    6,
-                    f"Comunidad: {comunidad} ({len(beneficiarios)} beneficiarios)",
-                    new_x="LMARGIN",
-                    new_y="NEXT",
-                )
-
-                pdf.set_font("Helvetica", "", 8)
-                for idx, beneficiario in enumerate(beneficiarios, start=1):
-                    nombre = (beneficiario.get("nombre_completo") or "").strip() or "Sin nombre"
-                    hogar_id = beneficiario.get("hogar_id", "")
-                    cui = beneficiario.get("cui_jefe_hogar", "")
-                    personas = beneficiario.get("numero_personas", 0)
-                    area = (beneficiario.get("area") or "").strip()
-                    ipm = round(beneficiario.get("ipm_gt", 0) or 0, 4)
-
-                    line = (
-                        f"{idx}. Hogar {hogar_id} | CUI {cui} | {nombre} | "
-                        f"Personas: {personas} | Area: {area} | IPM: {ipm}"
-                    )
-                    pdf.multi_cell(pdf.epw, 5, line, new_x="LMARGIN", new_y="NEXT")
-
-                pdf.ln(2)
+        for muni_index, (municipio, comunidades) in enumerate(sorted(municipios.items())):
+            if muni_index > 0:
+                pdf.add_page()
+            _write_municipio_pdf(pdf, departamento, municipio, comunidades)
 
     buf = BytesIO()
     pdf.output(buf)
     buf.seek(0)
     return buf
+
+
+def generate_pdf_grouped_zip(rows: list[dict]) -> BytesIO:
+    """
+    Genera un ZIP con un PDF por municipio, cada PDF agrupado por comunidad.
+    Los archivos van organizados por carpetas de departamento.
+    """
+    grouped = _group_rows_for_print(rows)
+    zip_buffer = BytesIO()
+
+    with ZipFile(zip_buffer, mode="w", compression=ZIP_DEFLATED) as zip_file:
+        for departamento, municipios in sorted(grouped.items()):
+            safe_depto = _sanitize_filename(departamento, "departamento")
+            for municipio, comunidades in sorted(municipios.items()):
+                pdf = _BeneficiarioPDF(orientation="P", unit="mm", format="A4")
+                pdf.alias_nb_pages()
+                pdf.set_auto_page_break(auto=True, margin=20)
+                pdf.add_page()
+
+                _write_municipio_pdf(pdf, departamento, municipio, comunidades)
+
+                pdf_buf = BytesIO()
+                pdf.output(pdf_buf)
+                pdf_buf.seek(0)
+
+                safe_muni = _sanitize_filename(municipio, "municipio")
+                filename = f"{safe_depto}/Formato de gobernanza comunitaria - {safe_muni}.pdf"
+                zip_file.writestr(filename, pdf_buf.getvalue())
+
+    zip_buffer.seek(0)
+    return zip_buffer
