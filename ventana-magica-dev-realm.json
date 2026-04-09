@@ -33,10 +33,14 @@
       "standardFlowEnabled": true,
       "directAccessGrantsEnabled": true,
       "redirectUris": [
+        "https://pruebas-extracciondatosrsh.mides.gob.gt/*",
+        "http://54.244.25.152/*",
         "http://localhost:5173/*",
         "http://127.0.0.1:5173/*"
       ],
       "webOrigins": [
+        "https://pruebas-extracciondatosrsh.mides.gob.gt",
+        "http://54.244.25.152",
         "http://localhost:5173",
         "http://127.0.0.1:5173"
       ],
