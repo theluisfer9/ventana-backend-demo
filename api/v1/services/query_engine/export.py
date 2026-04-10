@@ -23,6 +23,7 @@ from fpdf import FPDF
 
 _GEO_DEPTO_KEYWORDS = ("departamento", "depto", "dpto", "department", "nombre_departamento", "nom_depto")
 _GEO_MUNI_KEYWORDS = ("municipio", "muni", "municipality", "nombre_municipio", "nom_muni")
+_GEO_LUGAR_KEYWORDS = ("lugar_poblado", "comunidad", "aldea", "caserio")
 
 
 def _normalize_export_value(value):
@@ -82,6 +83,36 @@ def _group_rows_by_geo(
             else "Sin Municipio"
         )
         tree[depto][muni].append(row)
+    return tree
+
+
+def _group_rows_by_geo3(
+    rows: list[dict],
+    depto_key: str | None,
+    muni_key: str | None,
+    lugar_key: str | None,
+) -> dict[str, dict[str, dict[str, list[dict]]]]:
+    """Agrupa rows en {departamento: {municipio: {lugar_poblado: [rows]}}}."""
+    tree: dict[str, dict[str, dict[str, list[dict]]]] = defaultdict(
+        lambda: defaultdict(lambda: defaultdict(list))
+    )
+    for row in rows:
+        depto = (
+            str(_normalize_export_value(row.get(depto_key, "Sin Departamento")))
+            if depto_key
+            else "Sin Departamento"
+        )
+        muni = (
+            str(_normalize_export_value(row.get(muni_key, "Sin Municipio")))
+            if muni_key
+            else "Sin Municipio"
+        )
+        lugar = (
+            str(_normalize_export_value(row.get(lugar_key, "Sin Comunidad")))
+            if lugar_key
+            else "Sin Comunidad"
+        )
+        tree[depto][muni][lugar].append(row)
     return tree
 
 
@@ -201,11 +232,17 @@ def _write_excel_sheet_fast(ws, headers: list[str], keys: list[str], rows: list[
 
 
 def generate_excel_zip(rows: list[dict], columns_meta: list[dict], title: str = "Consulta") -> BytesIO:
-    """Genera ZIP con un .xlsx por departamento; cada municipio es una hoja."""
+    """Genera ZIP con un .xlsx por departamento; cada municipio es una hoja.
+
+    Incluye TODAS las columnas seleccionadas (incluyendo depto/municipio).
+    """
     depto_key = _find_geo_key(columns_meta, _GEO_DEPTO_KEYWORDS)
     muni_key = _find_geo_key(columns_meta, _GEO_MUNI_KEYWORDS)
     tree = _group_rows_by_geo(rows, depto_key, muni_key)
-    headers, keys = _non_geo_meta(columns_meta, depto_key, muni_key)
+
+    # Incluir todas las columnas (no excluir las geo)
+    headers = [c["label"] for c in columns_meta]
+    keys = [c["column_name"] for c in columns_meta]
 
     zip_buf = BytesIO()
     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -230,17 +267,20 @@ def generate_excel_zip(rows: list[dict], columns_meta: list[dict], title: str = 
 _CHUNK_SIZE = 5_000
 
 
+_EXCEL_CHUNK_SIZE = 1_000_000  # Excel sin agrupar: hasta 1M por archivo
+
+
 def generate_excel_chunked_zip(rows: list[dict], columns_meta: list[dict], title: str = "Consulta") -> BytesIO:
-    """Genera ZIP con excels de max 10K filas cada uno, sin agrupar por geo."""
+    """Genera ZIP con excels de max 1M filas cada uno, sin agrupar por geo."""
     headers = [c["label"] for c in columns_meta]
     keys = [c["column_name"] for c in columns_meta]
 
     zip_buf = BytesIO()
     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        total_chunks = max(1, (len(rows) + _CHUNK_SIZE - 1) // _CHUNK_SIZE)
+        total_chunks = max(1, (len(rows) + _EXCEL_CHUNK_SIZE - 1) // _EXCEL_CHUNK_SIZE)
         for chunk_idx in range(total_chunks):
-            start = chunk_idx * _CHUNK_SIZE
-            chunk_rows = rows[start:start + _CHUNK_SIZE]
+            start = chunk_idx * _EXCEL_CHUNK_SIZE
+            chunk_rows = rows[start:start + _EXCEL_CHUNK_SIZE]
 
             wb = Workbook(write_only=True)
             ws = wb.create_sheet(title=title[:31])
@@ -391,8 +431,9 @@ def _write_pdf_section_header(
     depto_name: str,
     muni_name: str,
     title: str = "Consulta",
+    lugar_name: str | None = None,
 ):
-    """Escribe header de seccion estilo beneficiarios con depto/muni."""
+    """Escribe header de seccion estilo beneficiarios con depto/muni/comunidad."""
     # Linea superior: TITULO - MUNICIPIO DE X - DEPARTAMENTO DE Y
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(0, 0, 0)
@@ -403,10 +444,16 @@ def _write_pdf_section_header(
     # Titulo azul bold subrayado
     pdf.set_font("Helvetica", "BU", 11)
     pdf.set_text_color(31, 78, 121)
-    detail_line = _sanitize_for_pdf(
-        f"LISTADO DE REGISTROS IDENTIFICADOS EN EL "
-        f"MUNICIPIO DE {muni_name.upper()} DEL DEPARTAMENTO DE {depto_name.upper()}"
-    )
+    if lugar_name:
+        detail_line = _sanitize_for_pdf(
+            f"LISTADO DE REGISTROS IDENTIFICADOS EN LA COMUNIDAD DE {lugar_name.upper()}, "
+            f"MUNICIPIO DE {muni_name.upper()} DEL DEPARTAMENTO DE {depto_name.upper()}"
+        )
+    else:
+        detail_line = _sanitize_for_pdf(
+            f"LISTADO DE REGISTROS IDENTIFICADOS EN EL "
+            f"MUNICIPIO DE {muni_name.upper()} DEL DEPARTAMENTO DE {depto_name.upper()}"
+        )
     pdf.multi_cell(0, 6, detail_line, new_x="LMARGIN", new_y="NEXT")
     pdf.ln(1)
 
@@ -553,15 +600,18 @@ _PDF_ROWS_PER_DEPTO = 5_000
 
 
 def generate_pdf_zip(rows: list[dict], columns_meta: list[dict], title: str = "Consulta") -> BytesIO:
-    """Genera ZIP con un .pdf por departamento, secciones por municipio.
+    """Genera ZIP con un .pdf por departamento, secciones por municipio y comunidad.
 
     Usa formato listado estilo beneficiarios.
     Limita a _PDF_ROWS_PER_DEPTO filas por departamento.
+    Estructura: departamento -> municipio -> comunidad (lugar poblado) -> registros
     """
     depto_key = _find_geo_key(columns_meta, _GEO_DEPTO_KEYWORDS)
     muni_key = _find_geo_key(columns_meta, _GEO_MUNI_KEYWORDS)
-    tree = _group_rows_by_geo(rows, depto_key, muni_key)
-    headers, keys = _non_geo_meta(columns_meta, depto_key, muni_key)
+    lugar_key = _find_geo_key(columns_meta, _GEO_LUGAR_KEYWORDS)
+    tree = _group_rows_by_geo3(rows, depto_key, muni_key, lugar_key)
+    headers = [c["label"] for c in columns_meta]
+    keys = [c["column_name"] for c in columns_meta]
 
     zip_buf = BytesIO()
     with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -576,17 +626,26 @@ def generate_pdf_zip(rows: list[dict], columns_meta: list[dict], title: str = "C
             pdf.set_auto_page_break(auto=True, margin=20)
 
             depto_row_count = 0
+            stop_depto = False
             for muni_name in sorted(municipios.keys()):
-                if depto_row_count >= _PDF_ROWS_PER_DEPTO:
+                if stop_depto:
                     break
-                muni_rows = municipios[muni_name]
-                remaining = _PDF_ROWS_PER_DEPTO - depto_row_count
-                muni_rows = muni_rows[:remaining]
-                depto_row_count += len(muni_rows)
+                lugares = municipios[muni_name]
+                for lugar_name in sorted(lugares.keys()):
+                    if depto_row_count >= _PDF_ROWS_PER_DEPTO:
+                        stop_depto = True
+                        break
+                    lugar_rows = lugares[lugar_name]
+                    remaining = _PDF_ROWS_PER_DEPTO - depto_row_count
+                    lugar_rows = lugar_rows[:remaining]
+                    depto_row_count += len(lugar_rows)
 
-                pdf.add_page()
-                _write_pdf_section_header(pdf, depto_name, muni_name, title)
-                _write_pdf_listing_rows(pdf, headers, keys, muni_rows)
+                    pdf.add_page()
+                    _write_pdf_section_header(
+                        pdf, depto_name, muni_name, title,
+                        lugar_name=lugar_name if lugar_key else None,
+                    )
+                    _write_pdf_listing_rows(pdf, headers, keys, lugar_rows)
 
             pdf_buf = BytesIO()
             pdf.output(pdf_buf)

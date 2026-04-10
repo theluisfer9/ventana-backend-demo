@@ -84,6 +84,7 @@ def _run_export_job(job_id: UUID, user_id: UUID, body: dict):
 
         formato = body["formato"]
         saved_query_id = body.get("saved_query_id")
+        report_title = "Consulta"
 
         # Resolve datasource, columns, filters from saved query or from body
         if saved_query_id:
@@ -104,6 +105,8 @@ def _run_export_job(job_id: UUID, user_id: UUID, body: dict):
             group_by = sq.group_by or []
             aggregations = sq.aggregations or []
             agrupar = sq.agrupar
+            if sq.name:
+                report_title = sq.name
         else:
             ds = (
                 db.query(DataSource)
@@ -121,6 +124,8 @@ def _run_export_job(job_id: UUID, user_id: UUID, body: dict):
             filters = body.get("filters", [])
             group_by = body.get("group_by", [])
             aggregations = body.get("aggregations", [])
+            if ds.name:
+                report_title = ds.name
 
         if agrupar:
             columns = _ensure_geo_columns(columns, ds.columns_def)
@@ -181,9 +186,9 @@ def _run_export_job(job_id: UUID, user_id: UUID, body: dict):
             filename = f"consulta_{ts}.zip"
             filepath = os.path.join(_EXPORT_DIR, f"{job_id}.zip")
             if agrupar:
-                buf = generate_excel_zip(rows, columns_meta, title="Consulta")
+                buf = generate_excel_zip(rows, columns_meta, title=report_title)
             else:
-                buf = generate_excel_chunked_zip(rows, columns_meta, title="Consulta")
+                buf = generate_excel_chunked_zip(rows, columns_meta, title=report_title)
             with open(filepath, "wb") as f:
                 f.write(buf.getvalue())
             media_type = "application/zip"
@@ -192,9 +197,9 @@ def _run_export_job(job_id: UUID, user_id: UUID, body: dict):
             filename = f"consulta_{ts}.zip"
             filepath = os.path.join(_EXPORT_DIR, f"{job_id}.zip")
             if agrupar:
-                buf = generate_pdf_zip(rows, columns_meta, title="Consulta")
+                buf = generate_pdf_zip(rows, columns_meta, title=report_title)
             else:
-                buf = generate_pdf_chunked_zip(rows, columns_meta, title="Consulta")
+                buf = generate_pdf_chunked_zip(rows, columns_meta, title=report_title)
             with open(filepath, "wb") as f:
                 f.write(buf.getvalue())
             media_type = "application/zip"
@@ -212,6 +217,43 @@ def _run_export_job(job_id: UUID, user_id: UUID, body: dict):
         job.completed_at = datetime.utcnow()
         db.commit()
         logger.info("Export job %s completed: %s (%d rows)", job_id, filename, len(rows))
+
+        # Registrar audit event de la exportacion
+        try:
+            from api.v1.services.audit import (
+                log_audit_event,
+                build_query_audit_payload,
+                build_query_audit_summary,
+            )
+
+            payload_summary = build_query_audit_payload(
+                datasource=ds,
+                selected_columns=[c.column_name for c in validated_cols],
+                filters=filters,
+                group_by=group_by or [],
+                aggregations=aggregations or [],
+                agrupar=agrupar,
+                format=formato,
+            )
+            log_audit_event(
+                db,
+                event_type="export",
+                module="query_builder",
+                action=f"export_{formato}",
+                user=user,
+                request=None,
+                resource_type="datasource",
+                resource_id=str(ds.id),
+                payload_summary=payload_summary,
+                summary_text=build_query_audit_summary(
+                    payload_summary,
+                    event_type="export",
+                    result_count=len(rows),
+                ),
+                result_count=len(rows),
+            )
+        except Exception:
+            logger.exception("Failed to log audit for export job %s", job_id)
 
     except Exception as e:
         logger.exception("Export job %s failed", job_id)

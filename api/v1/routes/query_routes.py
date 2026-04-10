@@ -188,16 +188,13 @@ def list_available_datasources(
     db: Session = Depends(get_sync_db_pg),
 ):
     query = db.query(DataSource).options(joinedload(DataSource.columns_def)).filter(DataSource.is_active == True)
-    user_permissions = {p.code for p in current_user.role.permissions} if current_user.role else set()
-    sees_all = _is_admin(current_user) or "reports:advanced" in user_permissions
-    if not sees_all:
-        role_ds_ids = db.query(RoleDataSource.datasource_id).filter(
-            RoleDataSource.role_id == current_user.role_id,
-        ).subquery()
-        conditions = [DataSource.id.in_(select(role_ds_ids.c.datasource_id))]
+    # Super admin ve todo, los demas filtran por institucion
+    if not _is_admin(current_user):
         if current_user.institution_id:
-            conditions.append(DataSource.institution_id == current_user.institution_id)
-        query = query.filter(or_(*conditions))
+            query = query.filter(DataSource.institution_id == current_user.institution_id)
+        else:
+            # Sin institucion asignada: no ve nada (salvo que sea admin)
+            query = query.filter(DataSource.id == None)
     sources = query.order_by(DataSource.name).all()
     return [
         {
